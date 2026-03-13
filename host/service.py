@@ -1,6 +1,9 @@
 """
 Ghost Display - Windows 서비스 래퍼
-SYSTEM 권한으로 실행되어 잠금화면에서도 DXGI 캡처 가능
+서비스(Session 0)에서 사용자 세션의 데스크톱에 접근하여 DXGI 캡처 가능
+
+방식: 서비스가 활성 사용자 세션을 찾아 그 세션에서 호스트 프로세스를 실행
+      → SYSTEM 권한 + 사용자 데스크톱 접근 동시 달성
 
 사용법:
   python service.py install    서비스 등록
@@ -15,12 +18,17 @@ import sys
 import os
 import time
 import json
-import threading
+import subprocess
+import ctypes
 import logging
 
 import win32serviceutil
 import win32service
 import win32event
+import win32ts
+import win32process
+import win32con
+import win32api
 import servicemanager
 
 # 서비스에서 실행 시 작업 디렉토리를 스크립트 위치로 설정
@@ -52,23 +60,127 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
-        # 누락된 키 채우기
         for k, v in DEFAULT_CONFIG.items():
             if k not in config:
                 config[k] = v
         return config
     else:
-        # 기본 설정 파일 생성
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
         return DEFAULT_CONFIG.copy()
 
 
-class ConfigNamespace:
-    """argparse.Namespace 대체 — dict를 attribute로 접근"""
-    def __init__(self, config_dict):
-        for k, v in config_dict.items():
-            setattr(self, k, v)
+def build_command(config):
+    """설정에서 main.py 실행 명령어 생성"""
+    python_exe = sys.executable
+    main_py = os.path.join(SCRIPT_DIR, "main.py")
+
+    cmd = f'"{python_exe}" "{main_py}"'
+    cmd += f' --capture-mode {config["capture_mode"]}'
+    cmd += f' --monitor {config["monitor"]}'
+    cmd += f' --fps {config["fps"]}'
+    cmd += f' --bitrate {config["bitrate"]}'
+    cmd += f' --video-port {config["video_port"]}'
+    cmd += f' --control-port {config["control_port"]}'
+    cmd += f' --scale {config["scale"]}'
+    if config.get("software"):
+        cmd += ' --software'
+    if config.get("no_virtual_display"):
+        cmd += ' --no-virtual-display'
+    if config.get("sendinput"):
+        cmd += ' --sendinput'
+    return cmd
+
+
+def get_active_session_id():
+    """활성 사용자 세션 ID 반환 (콘솔 또는 RDP)"""
+    # 먼저 콘솔 세션 확인
+    console_session = win32ts.WTSGetActiveConsoleSessionId()
+    if console_session != 0xFFFFFFFF:
+        try:
+            state = win32ts.WTSQuerySessionInformation(
+                win32ts.WTS_CURRENT_SERVER_HANDLE,
+                console_session,
+                win32ts.WTSConnectState
+            )
+            if state == win32ts.WTSActive:
+                return console_session
+        except:
+            pass
+
+    # 모든 세션에서 활성 세션 찾기
+    sessions = win32ts.WTSEnumerateSessions(win32ts.WTS_CURRENT_SERVER_HANDLE)
+    for session in sessions:
+        if session['State'] == win32ts.WTSActive and session['SessionId'] != 0:
+            return session['SessionId']
+
+    # 활성 세션 없으면 콘솔 세션이라도 반환
+    if console_session != 0xFFFFFFFF:
+        return console_session
+
+    return None
+
+
+def launch_in_session(session_id, cmd, log_file):
+    """사용자 세션에서 SYSTEM 권한으로 프로세스 실행"""
+    # 세션의 사용자 토큰 가져오기
+    token = win32ts.WTSQueryUserToken(session_id)
+
+    # 환경 변수 블록 생성
+    env = win32profile = None
+    try:
+        import win32profile
+        env = win32profile.CreateEnvironmentBlock(token, False)
+    except:
+        env = None
+
+    # STARTUPINFO 설정
+    si = win32process.STARTUPINFO()
+    si.dwFlags = win32con.STARTF_USESHOWWINDOW
+    si.wShowWindow = win32con.SW_HIDE
+    si.lpDesktop = "winsta0\\default"
+
+    # stdout/stderr를 로그 파일로 리다이렉트
+    log_handle = win32api.CreateFile(
+        log_file,
+        win32con.GENERIC_WRITE,
+        win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
+        None,
+        win32con.OPEN_ALWAYS,
+        0,
+        None
+    )
+    # 파일 끝으로 이동 (append)
+    win32api.SetFilePointer(log_handle, 0, win32con.FILE_END)
+
+    # 핸들 상속 가능하도록 보안 속성 설정
+    import pywintypes
+    sa = pywintypes.SECURITY_ATTRIBUTES()
+    sa.bInheritHandle = True
+
+    si.dwFlags |= win32con.STARTF_USESTDHANDLES
+    si.hStdOutput = log_handle
+    si.hStdError = log_handle
+
+    # CreateProcessAsUser로 사용자 세션에서 실행
+    proc_info = win32process.CreateProcessAsUser(
+        token,              # 사용자 토큰
+        None,               # lpApplicationName
+        cmd,                # lpCommandLine
+        None,               # lpProcessAttributes
+        None,               # lpThreadAttributes
+        True,               # bInheritHandles
+        win32con.CREATE_NEW_CONSOLE | win32con.CREATE_UNICODE_ENVIRONMENT,
+        env,                # lpEnvironment
+        SCRIPT_DIR,         # lpCurrentDirectory
+        si,                 # lpStartupInfo
+    )
+
+    handle, thread_handle, pid, tid = proc_info
+    win32api.CloseHandle(thread_handle)
+    win32api.CloseHandle(log_handle)
+
+    return handle, pid
 
 
 def setup_logging():
@@ -76,23 +188,9 @@ def setup_logging():
     logging.basicConfig(
         filename=LOG_FILE,
         level=logging.INFO,
-        format="%(asctime)s %(message)s",
+        format="%(asctime)s [Service] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    # print를 로그로 리다이렉트
-    class LogWriter:
-        def __init__(self, logger, level):
-            self.logger = logger
-            self.level = level
-            self.buf = ""
-        def write(self, msg):
-            if msg.strip():
-                self.logger.log(self.level, msg.strip())
-        def flush(self):
-            pass
-
-    sys.stdout = LogWriter(logging.getLogger(), logging.INFO)
-    sys.stderr = LogWriter(logging.getLogger(), logging.ERROR)
 
 
 class GhostDisplayService(win32serviceutil.ServiceFramework):
@@ -103,14 +201,20 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.stop_event = win32event.CreateEvent(None, 0, 0, None)
-        self.host = None
+        self.process_handle = None
+        self.process_pid = None
 
     def SvcStop(self):
         """서비스 중지"""
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.stop_event)
-        if self.host:
-            self.host.stop()
+
+        # 호스트 프로세스 종료
+        if self.process_handle:
+            try:
+                win32process.TerminateProcess(self.process_handle, 0)
+            except:
+                pass
 
     def SvcDoRun(self):
         """서비스 메인"""
@@ -122,39 +226,68 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
         setup_logging()
 
         try:
-            self._run_host()
+            self._run()
         except Exception as e:
             logging.error(f"Service error: {e}", exc_info=True)
             servicemanager.LogErrorMsg(f"Ghost Display error: {e}")
 
-    def _run_host(self):
-        """GhostHost 실행"""
-        from main import GhostHost
-
+    def _run(self):
+        """사용자 세션에서 호스트 프로세스 실행 + 감시"""
         config = load_config()
-        args = ConfigNamespace(config)
+        cmd = build_command(config)
+        logging.info(f"Command: {cmd}")
 
-        logging.info(f"Ghost Display service starting (capture: {config['capture_mode']})")
+        while True:
+            # 중지 신호 확인
+            if win32event.WaitForSingleObject(self.stop_event, 0) == win32event.WAIT_OBJECT_0:
+                break
 
-        self.host = GhostHost(args)
+            # 활성 사용자 세션 찾기
+            session_id = get_active_session_id()
+            if session_id is None:
+                logging.info("No active user session, waiting...")
+                # 5초 대기하면서 중지 신호 확인
+                if win32event.WaitForSingleObject(self.stop_event, 5000) == win32event.WAIT_OBJECT_0:
+                    break
+                continue
 
-        # 별도 스레드에서 호스트 실행
-        host_thread = threading.Thread(target=self._start_host, daemon=True)
-        host_thread.start()
+            logging.info(f"Launching host in session {session_id}")
 
-        # 중지 신호 대기
-        win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
+            try:
+                self.process_handle, self.process_pid = launch_in_session(
+                    session_id, cmd, LOG_FILE
+                )
+                logging.info(f"Host process started (PID: {self.process_pid})")
+            except Exception as e:
+                logging.error(f"Failed to launch: {e}", exc_info=True)
+                if win32event.WaitForSingleObject(self.stop_event, 10000) == win32event.WAIT_OBJECT_0:
+                    break
+                continue
 
-        if self.host:
-            self.host.stop()
+            # 프로세스 종료 또는 서비스 중지 대기
+            handles = [self.process_handle, self.stop_event]
+            result = win32event.WaitForMultipleObjects(handles, False, win32event.INFINITE)
 
-        logging.info("Ghost Display service stopped")
+            if result == win32event.WAIT_OBJECT_0:
+                # 프로세스가 종료됨 → 재시작
+                exit_code = win32process.GetExitCodeProcess(self.process_handle)
+                logging.info(f"Host process exited (code: {exit_code}), restarting in 3s...")
+                win32api.CloseHandle(self.process_handle)
+                self.process_handle = None
 
-    def _start_host(self):
-        try:
-            self.host.start()
-        except Exception as e:
-            logging.error(f"Host error: {e}", exc_info=True)
+                if win32event.WaitForSingleObject(self.stop_event, 3000) == win32event.WAIT_OBJECT_0:
+                    break
+            else:
+                # 서비스 중지 신호
+                if self.process_handle:
+                    try:
+                        win32process.TerminateProcess(self.process_handle, 0)
+                        win32api.CloseHandle(self.process_handle)
+                    except:
+                        pass
+                break
+
+        logging.info("Service stopped")
 
 
 def print_usage():
