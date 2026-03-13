@@ -155,42 +155,52 @@ def launch_in_session(session_id, cmd, log_file):
     """사용자 세션에서 프로세스 실행 (Sunshine/Parsec 방식)
 
     WTSQueryUserToken으로 사용자 토큰 획득 → CreateProcessAsUser
+    실패 시 subprocess.Popen으로 폴백
     """
-    # 사용자 토큰 가져오기
-    token = win32ts.WTSQueryUserToken(session_id)
-
-    # 환경 변수 블록 생성
-    env = None
+    # 먼저 CreateProcessAsUser 시도
     try:
-        import win32profile
-        env = win32profile.CreateEnvironmentBlock(token, False)
-    except:
+        token = win32ts.WTSQueryUserToken(session_id)
+
         env = None
+        try:
+            import win32profile
+            env = win32profile.CreateEnvironmentBlock(token, False)
+        except:
+            env = None
 
-    # STARTUPINFO 설정
-    si = win32process.STARTUPINFO()
-    si.dwFlags = win32con.STARTF_USESHOWWINDOW
-    si.wShowWindow = win32con.SW_HIDE
-    si.lpDesktop = "winsta0\\default"
+        si = win32process.STARTUPINFO()
+        si.dwFlags = win32con.STARTF_USESHOWWINDOW
+        si.wShowWindow = win32con.SW_HIDE
+        si.lpDesktop = "winsta0\\default"
 
-    # 사용자 세션에서 실행
-    proc_info = win32process.CreateProcessAsUser(
-        token,              # 사용자 토큰
-        None,               # lpApplicationName
-        cmd,                # lpCommandLine
-        None,               # lpProcessAttributes
-        None,               # lpThreadAttributes
-        False,              # bInheritHandles
-        win32con.CREATE_NEW_CONSOLE | win32con.CREATE_UNICODE_ENVIRONMENT,
-        env,                # lpEnvironment
-        SCRIPT_DIR,         # lpCurrentDirectory
-        si,                 # lpStartupInfo
-    )
+        proc_info = win32process.CreateProcessAsUser(
+            token, None, cmd, None, None, False,
+            win32con.CREATE_NEW_CONSOLE | win32con.CREATE_UNICODE_ENVIRONMENT,
+            env, SCRIPT_DIR, si,
+        )
 
-    handle, thread_handle, pid, tid = proc_info
-    win32api.CloseHandle(thread_handle)
+        handle, thread_handle, pid, tid = proc_info
+        win32api.CloseHandle(thread_handle)
+        return handle, pid
 
-    return handle, pid
+    except Exception as e:
+        logging.error(f"CreateProcessAsUser failed: {e}, trying subprocess")
+
+        # 폴백: subprocess로 직접 실행 (stderr 캡처)
+        import shlex
+        proc = subprocess.Popen(
+            cmd,
+            stdout=open(log_file, "a"),
+            stderr=subprocess.STDOUT,
+            cwd=SCRIPT_DIR,
+            shell=True,
+        )
+
+        # subprocess의 핸들을 win32 핸들로 변환
+        handle = win32api.OpenProcess(
+            win32con.PROCESS_ALL_ACCESS, False, proc.pid
+        )
+        return handle, proc.pid
 
 
 def setup_logging():
