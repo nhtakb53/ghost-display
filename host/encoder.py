@@ -260,6 +260,10 @@ class H264Encoder:
             except:
                 pass
             try:
+                self.process.stdout.close()
+            except:
+                pass
+            try:
                 self.process.terminate()
                 self.process.wait(timeout=3)
             except:
@@ -268,4 +272,7 @@ class H264Encoder:
                 except:
                     pass
             self.process = None
+        # _read_and_parse 스레드 종료 대기
+        if self._read_thread and self._read_thread.is_alive():
+            self._read_thread.join(timeout=3)
         print(f"  [Encoder] Stopped (avg {self.get_fps():.1f} fps)")

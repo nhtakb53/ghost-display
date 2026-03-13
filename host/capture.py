@@ -42,6 +42,10 @@ class ScreenCapture:
 
     def _start_session(self):
         """캡처 세션 하나를 시작"""
+        # 이전 스레드 정리
+        if hasattr(self, '_thread') and self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
+
         self._session_active = True
 
         self.capture = WindowsCapture(

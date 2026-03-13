@@ -8,6 +8,7 @@ import os
 import time
 import signal
 import argparse
+import threading
 
 import cv2
 import numpy as np
@@ -131,13 +132,16 @@ class GhostHost:
 
     def _restart_encoder(self):
         """인코더 재시작 (스레드 안전)"""
-        if hasattr(self, '_restarting_encoder') and self._restarting_encoder:
-            return
-        self._restarting_encoder = True
+        if not hasattr(self, '_encoder_lock'):
+            self._encoder_lock = threading.Lock()
+        if not self._encoder_lock.acquire(blocking=False):
+            return  # 이미 재시작 중
         try:
             print("  [Host] Restarting encoder...")
-            if self.encoder:
-                self.encoder.stop()
+            old_encoder = self.encoder
+            if old_encoder:
+                old_encoder.on_nal = None  # 콜백 해제 먼저
+                old_encoder.stop()
             self.encoder = H264Encoder(
                 width=self.enc_w,
                 height=self.enc_h,
@@ -148,7 +152,7 @@ class GhostHost:
             self.encoder.on_nal = self._on_nal
             self.encoder.start()
         finally:
-            self._restarting_encoder = False
+            self._encoder_lock.release()
 
     def _main_loop(self):
         """캡처 → 리사이즈 → 인코딩 메인 루프"""
