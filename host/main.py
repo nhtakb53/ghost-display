@@ -269,7 +269,29 @@ def main():
     parser.add_argument("--sendinput", action="store_true", help="Force SendInput mode (skip kernel driver)")
     parser.add_argument("--capture-mode", type=str, default="wgc", choices=["wgc", "dxgi"],
                         help="Capture mode: wgc (default) or dxgi (supports lock screen with SYSTEM privilege)")
+    parser.add_argument("--log-file", type=str, default=None, help="Log output to file (for service mode)")
     args = parser.parse_args()
+
+    # 로그 파일 설정 (서비스 모드)
+    if args.log_file:
+        import logging
+        logging.basicConfig(
+            filename=args.log_file,
+            level=logging.INFO,
+            format="%(asctime)s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        class LogWriter:
+            def __init__(self, level):
+                self.logger = logging.getLogger()
+                self.level = level
+            def write(self, msg):
+                if msg.strip():
+                    self.logger.log(self.level, msg.strip())
+            def flush(self):
+                pass
+        sys.stdout = LogWriter(logging.INFO)
+        sys.stderr = LogWriter(logging.ERROR)
 
     host = GhostHost(args)
 
