@@ -43,7 +43,8 @@ class GhostHost:
             video_port=args.video_port,
             control_port=args.control_port,
         )
-        self.input_handler = InputHandler(force_sendinput=getattr(args, 'sendinput', False))
+        force_sendinput = getattr(args, 'sendinput', False) or getattr(args, 'input_mode', 'kse') == 'sendinput'
+        self.input_handler = InputHandler(force_sendinput=force_sendinput)
         self.vdisplay = VirtualDisplayManager()
         self.running = False
         self.scale = 1.0
@@ -285,7 +286,9 @@ def main():
     parser.add_argument("--software", action="store_true", help="Use software encoder (no NVENC)")
     parser.add_argument("--scale", type=float, default=0, help="Scale factor (e.g. 0.5 for half res). 0=auto")
     parser.add_argument("--no-virtual-display", action="store_true", help="Disable auto virtual display")
-    parser.add_argument("--sendinput", action="store_true", help="Force SendInput mode (skip kernel driver)")
+    parser.add_argument("--input-mode", type=str, default="kse", choices=["kse", "sendinput"],
+                        help="Input mode: kse (kernel driver, default) or sendinput (Windows API)")
+    parser.add_argument("--sendinput", action="store_true", help="(deprecated) Same as --input-mode sendinput")
     parser.add_argument("--capture-mode", type=str, default="wgc", choices=["wgc", "dxgi"],
                         help="Capture mode: wgc (default) or dxgi (supports lock screen with SYSTEM privilege)")
     parser.add_argument("--log-file", type=str, default=None, help="Log output to file (for service mode)")

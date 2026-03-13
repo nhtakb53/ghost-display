@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
     "software": False,
     "scale": 0,
     "no_virtual_display": False,
-    "sendinput": False,
+    "input_mode": "kse",
     "capture_mode": "dxgi",
 }
 
@@ -116,8 +116,7 @@ def build_command(config):
         cmd += ' --software'
     if config.get("no_virtual_display"):
         cmd += ' --no-virtual-display'
-    if config.get("sendinput"):
-        cmd += ' --sendinput'
+    cmd += f' --input-mode {config.get("input_mode", "kse")}'
 
     return cmd
 
