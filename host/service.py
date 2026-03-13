@@ -29,6 +29,7 @@ import win32ts
 import win32process
 import win32con
 import win32api
+import win32security
 import servicemanager
 
 # 서비스에서 실행 시 작업 디렉토리를 스크립트 위치로 설정
@@ -145,15 +146,36 @@ def get_active_session_id():
 
 
 def launch_in_session(session_id, cmd, log_file):
-    """사용자 세션에서 SYSTEM 권한으로 프로세스 실행"""
-    # 세션의 사용자 토큰 가져오기
-    token = win32ts.WTSQueryUserToken(session_id)
+    """사용자 세션에서 SYSTEM 권한으로 프로세스 실행
+
+    SYSTEM 토큰을 복제하고 세션 ID만 변경 → SYSTEM 권한 + 사용자 데스크톱 접근
+    """
+    # 현재 프로세스(서비스)의 SYSTEM 토큰 가져오기
+    current_token = win32security.OpenProcessToken(
+        win32api.GetCurrentProcess(),
+        win32con.TOKEN_ALL_ACCESS
+    )
+
+    # 토큰 복제 (Primary token으로)
+    new_token = win32security.DuplicateTokenEx(
+        current_token,
+        win32security.SecurityImpersonation,
+        win32con.TOKEN_ALL_ACCESS,
+        win32security.TokenPrimary,
+    )
+
+    # 복제된 토큰의 세션 ID를 사용자 세션으로 변경
+    win32security.SetTokenInformation(
+        new_token,
+        win32security.TokenSessionId,
+        session_id
+    )
 
     # 환경 변수 블록 생성
-    env = win32profile = None
+    env = None
     try:
         import win32profile
-        env = win32profile.CreateEnvironmentBlock(token, False)
+        env = win32profile.CreateEnvironmentBlock(new_token, False)
     except:
         env = None
 
@@ -163,9 +185,9 @@ def launch_in_session(session_id, cmd, log_file):
     si.wShowWindow = win32con.SW_HIDE
     si.lpDesktop = "winsta0\\default"
 
-    # CreateProcessAsUser로 사용자 세션에서 실행
+    # SYSTEM 토큰으로 사용자 세션에서 실행
     proc_info = win32process.CreateProcessAsUser(
-        token,              # 사용자 토큰
+        new_token,          # SYSTEM 토큰 (세션만 변경)
         None,               # lpApplicationName
         cmd,                # lpCommandLine
         None,               # lpProcessAttributes
@@ -232,10 +254,12 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
             servicemanager.LogErrorMsg(f"Ghost Display error: {e}")
 
     def _run(self):
-        """사용자 세션에서 호스트 프로세스 실행 + 감시"""
+        """사용자 세션에서 호스트 프로세스 실행 + 감시 + 세션 변경 감지"""
         config = load_config()
         cmd = build_command(config)
         logging.info(f"Command: {cmd}")
+
+        current_session = None
 
         while True:
             # 중지 신호 확인
@@ -246,27 +270,40 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
             session_id = get_active_session_id()
             if session_id is None:
                 logging.info("No active user session, waiting...")
-                # 5초 대기하면서 중지 신호 확인
                 if win32event.WaitForSingleObject(self.stop_event, 5000) == win32event.WAIT_OBJECT_0:
                     break
                 continue
 
-            logging.info(f"Launching host in session {session_id}")
+            # 세션이 바뀌면 기존 프로세스 종료 후 새 세션에서 재시작
+            if current_session is not None and session_id != current_session:
+                logging.info(f"Session changed {current_session} -> {session_id}, restarting host")
+                if self.process_handle:
+                    try:
+                        win32process.TerminateProcess(self.process_handle, 0)
+                        win32api.CloseHandle(self.process_handle)
+                    except:
+                        pass
+                    self.process_handle = None
 
-            try:
-                self.process_handle, self.process_pid = launch_in_session(
-                    session_id, cmd, LOG_FILE
-                )
-                logging.info(f"Host process started (PID: {self.process_pid})")
-            except Exception as e:
-                logging.error(f"Failed to launch: {e}", exc_info=True)
-                if win32event.WaitForSingleObject(self.stop_event, 10000) == win32event.WAIT_OBJECT_0:
-                    break
-                continue
+            current_session = session_id
 
-            # 프로세스 종료 또는 서비스 중지 대기
+            if self.process_handle is None:
+                logging.info(f"Launching host in session {session_id} (SYSTEM)")
+
+                try:
+                    self.process_handle, self.process_pid = launch_in_session(
+                        session_id, cmd, LOG_FILE
+                    )
+                    logging.info(f"Host process started (PID: {self.process_pid})")
+                except Exception as e:
+                    logging.error(f"Failed to launch: {e}", exc_info=True)
+                    if win32event.WaitForSingleObject(self.stop_event, 10000) == win32event.WAIT_OBJECT_0:
+                        break
+                    continue
+
+            # 프로세스 종료 또는 서비스 중지를 5초 단위로 확인 (세션 변경 감지용)
             handles = [self.process_handle, self.stop_event]
-            result = win32event.WaitForMultipleObjects(handles, False, win32event.INFINITE)
+            result = win32event.WaitForMultipleObjects(handles, False, 5000)
 
             if result == win32event.WAIT_OBJECT_0:
                 # 프로세스가 종료됨 → 재시작
@@ -277,7 +314,7 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
 
                 if win32event.WaitForSingleObject(self.stop_event, 3000) == win32event.WAIT_OBJECT_0:
                     break
-            else:
+            elif result == win32event.WAIT_OBJECT_0 + 1:
                 # 서비스 중지 신호
                 if self.process_handle:
                     try:
@@ -286,6 +323,7 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
                     except:
                         pass
                 break
+            # WAIT_TIMEOUT → 루프 돌면서 세션 변경 확인
 
         logging.info("Service stopped")
 
