@@ -315,25 +315,38 @@ def get_device_path():
 
 
 class InputHandler:
-    """KSE 커널 드라이버를 통한 입력 인젝션"""
+    """입력 인젝션 - KSE 커널 드라이버 우선, 실패 시 SendInput 폴백"""
 
     def __init__(self, screen_width=1920, screen_height=1080):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.handle = None
         self.connected = False
+        self.use_sendinput = False  # SendInput 폴백 모드
 
     def connect(self):
-        """커널 드라이버에 연결 (미로드 시 자동 로드)"""
+        """커널 드라이버에 연결 시도, 실패 시 SendInput 모드"""
+        # 1. KSE 드라이버 시도
+        if self._connect_kse():
+            return True
+
+        # 2. SendInput 폴백
+        print("  [Input] Falling back to SendInput mode")
+        self.use_sendinput = True
+        self.connected = True
+        print("  [Input] SendInput mode active")
+        return True
+
+    def _connect_kse(self):
+        """KSE 커널 드라이버 연결"""
         device_path = get_device_path()
         if not device_path:
             print("  [Input] Driver not found in registry, attempting auto-load...")
             if load_driver():
-                # 로드 후 다시 경로 확인
                 time.sleep(1)
                 device_path = get_device_path()
             if not device_path:
-                print("  [Input] WARNING: Driver not available")
+                print("  [Input] KSE driver not available")
                 return False
 
         print(f"  [Input] Device: {device_path}")
@@ -350,7 +363,6 @@ class InputHandler:
             self.handle = None
             return False
 
-        # 핸드셰이크
         req = KSERequest()
         req.cmd = CMD_HANDSHAKE
         req.sub = 0
@@ -361,15 +373,15 @@ class InputHandler:
                 version = req.u.handshake.version
                 print(f"  [Input] KSE driver connected (v{version >> 8}.{version & 0xFF})")
                 self.connected = True
-                # 입력 테스트: 마우스를 화면 중앙으로 이동
-                self._mouse_move(self.screen_width // 2, self.screen_height // 2)
-                print(f"  [Input] Test: mouse move to center ({self.screen_width // 2}, {self.screen_height // 2})")
                 return True
             else:
                 print(f"  [Input] Handshake failed: bad response magic")
         else:
             print(f"  [Input] Handshake IOCTL failed")
 
+        if self.handle:
+            kernel32.CloseHandle(self.handle)
+            self.handle = None
         return False
 
     def _ioctl(self, req):
@@ -396,11 +408,9 @@ class InputHandler:
     def handle_event(self, event):
         """Viewer에서 받은 입력 이벤트 처리"""
         if not self.connected:
-            print(f"  [Input] Event ignored (not connected): {event}")
             return
 
         evt_type = event.get("type")
-        print(f"  [Input] Event: {event}")
 
         if evt_type == "mouse_move":
             self._mouse_move(event["x"], event["y"])
@@ -417,66 +427,142 @@ class InputHandler:
             self._key_event(event.get("scan", 0), down=False,
                            e0=event.get("e0", False))
 
+    # --- SendInput 구조체 ---
+
+    INPUT_MOUSE = 0
+    INPUT_KEYBOARD = 1
+
+    MOUSEEVENTF_MOVE = 0x0001
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    MOUSEEVENTF_RIGHTDOWN = 0x0008
+    MOUSEEVENTF_RIGHTUP = 0x0010
+    MOUSEEVENTF_MIDDLEDOWN = 0x0020
+    MOUSEEVENTF_MIDDLEUP = 0x0040
+    MOUSEEVENTF_WHEEL = 0x0800
+    MOUSEEVENTF_ABSOLUTE = 0x8000
+
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_SCANCODE = 0x0008
+
     def _mouse_move(self, x, y):
         """절대 좌표 마우스 이동"""
-        # 0~65535 정규화
         abs_x = int(x * 65535 / max(self.screen_width, 1))
         abs_y = int(y * 65535 / max(self.screen_height, 1))
 
-        req = KSERequest()
-        req.cmd = CMD_INPUT
-        req.sub = SUB_INPUT_MOUSE
-        req.u.mouse.dx = abs_x
-        req.u.mouse.dy = abs_y
-        req.u.mouse.buttonFlags = 0
-        req.u.mouse.buttonData = 0
-        req.u.mouse.mouseFlags = MOUSE_MOVE_ABSOLUTE
-        self._ioctl(req)
+        if self.use_sendinput:
+            self._send_mouse_input(abs_x, abs_y,
+                                   self.MOUSEEVENTF_MOVE | self.MOUSEEVENTF_ABSOLUTE,
+                                   0)
+        else:
+            req = KSERequest()
+            req.cmd = CMD_INPUT
+            req.sub = SUB_INPUT_MOUSE
+            req.u.mouse.dx = abs_x
+            req.u.mouse.dy = abs_y
+            req.u.mouse.buttonFlags = 0
+            req.u.mouse.buttonData = 0
+            req.u.mouse.mouseFlags = MOUSE_MOVE_ABSOLUTE
+            self._ioctl(req)
 
     def _mouse_button(self, button, down):
         """마우스 버튼"""
-        flags = 0
-        if button == "left":
-            flags = MOUSE_LEFT_BUTTON_DOWN if down else MOUSE_LEFT_BUTTON_UP
-        elif button == "right":
-            flags = MOUSE_RIGHT_BUTTON_DOWN if down else MOUSE_RIGHT_BUTTON_UP
-        elif button == "middle":
-            flags = MOUSE_MIDDLE_BUTTON_DOWN if down else MOUSE_MIDDLE_BUTTON_UP
+        if self.use_sendinput:
+            flag_map = {
+                ("left", True): self.MOUSEEVENTF_LEFTDOWN,
+                ("left", False): self.MOUSEEVENTF_LEFTUP,
+                ("right", True): self.MOUSEEVENTF_RIGHTDOWN,
+                ("right", False): self.MOUSEEVENTF_RIGHTUP,
+                ("middle", True): self.MOUSEEVENTF_MIDDLEDOWN,
+                ("middle", False): self.MOUSEEVENTF_MIDDLEUP,
+            }
+            flags = flag_map.get((button, down), 0)
+            if flags:
+                self._send_mouse_input(0, 0, flags, 0)
+        else:
+            flags = 0
+            if button == "left":
+                flags = MOUSE_LEFT_BUTTON_DOWN if down else MOUSE_LEFT_BUTTON_UP
+            elif button == "right":
+                flags = MOUSE_RIGHT_BUTTON_DOWN if down else MOUSE_RIGHT_BUTTON_UP
+            elif button == "middle":
+                flags = MOUSE_MIDDLE_BUTTON_DOWN if down else MOUSE_MIDDLE_BUTTON_UP
 
-        req = KSERequest()
-        req.cmd = CMD_INPUT
-        req.sub = SUB_INPUT_MOUSE
-        req.u.mouse.dx = 0
-        req.u.mouse.dy = 0
-        req.u.mouse.buttonFlags = flags
-        req.u.mouse.buttonData = 0
-        req.u.mouse.mouseFlags = 0
-        self._ioctl(req)
+            req = KSERequest()
+            req.cmd = CMD_INPUT
+            req.sub = SUB_INPUT_MOUSE
+            req.u.mouse.dx = 0
+            req.u.mouse.dy = 0
+            req.u.mouse.buttonFlags = flags
+            req.u.mouse.buttonData = 0
+            req.u.mouse.mouseFlags = 0
+            self._ioctl(req)
 
     def _mouse_wheel(self, delta):
         """마우스 휠"""
-        req = KSERequest()
-        req.cmd = CMD_INPUT
-        req.sub = SUB_INPUT_MOUSE
-        req.u.mouse.dx = 0
-        req.u.mouse.dy = 0
-        req.u.mouse.buttonFlags = MOUSE_WHEEL
-        req.u.mouse.buttonData = delta & 0xFFFF
-        req.u.mouse.mouseFlags = 0
-        self._ioctl(req)
+        if self.use_sendinput:
+            self._send_mouse_input(0, 0, self.MOUSEEVENTF_WHEEL, delta)
+        else:
+            req = KSERequest()
+            req.cmd = CMD_INPUT
+            req.sub = SUB_INPUT_MOUSE
+            req.u.mouse.dx = 0
+            req.u.mouse.dy = 0
+            req.u.mouse.buttonFlags = MOUSE_WHEEL
+            req.u.mouse.buttonData = delta & 0xFFFF
+            req.u.mouse.mouseFlags = 0
+            self._ioctl(req)
 
     def _key_event(self, scan, down, e0=False):
-        """키보드 이벤트 (스캔코드 기반)"""
-        flags = KEY_MAKE if down else KEY_BREAK
-        if e0:
-            flags |= KEY_E0
+        """키보드 이벤트"""
+        if self.use_sendinput:
+            flags = self.KEYEVENTF_SCANCODE
+            if e0:
+                flags |= self.KEYEVENTF_EXTENDEDKEY
+            if not down:
+                flags |= self.KEYEVENTF_KEYUP
+            self._send_key_input(scan, flags)
+        else:
+            flags = KEY_MAKE if down else KEY_BREAK
+            if e0:
+                flags |= KEY_E0
 
-        req = KSERequest()
-        req.cmd = CMD_INPUT
-        req.sub = SUB_INPUT_KEYBOARD
-        req.u.keyboard.scanCode = scan & 0xFFFF
-        req.u.keyboard.flags = flags
-        self._ioctl(req)
+            req = KSERequest()
+            req.cmd = CMD_INPUT
+            req.sub = SUB_INPUT_KEYBOARD
+            req.u.keyboard.scanCode = scan & 0xFFFF
+            req.u.keyboard.flags = flags
+            self._ioctl(req)
+
+    def _send_mouse_input(self, dx, dy, flags, data):
+        """SendInput으로 마우스 이벤트 전송"""
+        # MOUSEINPUT: dx(4) dy(4) mouseData(4) dwFlags(4) time(4) dwExtraInfo(ptr)
+        ptr_size = ctypes.sizeof(ctypes.c_void_p)
+        # INPUT struct: type(4) + padding + MOUSEINPUT
+        # 64bit: type(4) + pad(4) + MOUSEINPUT(32) = 40 bytes
+        inp = (ctypes.c_byte * 40)()
+        struct.pack_into("I", inp, 0, self.INPUT_MOUSE)  # type
+        struct.pack_into("i", inp, 8, dx)       # dx
+        struct.pack_into("i", inp, 12, dy)      # dy
+        struct.pack_into("i", inp, 16, data)    # mouseData
+        struct.pack_into("I", inp, 20, flags)   # dwFlags
+        struct.pack_into("I", inp, 24, 0)       # time
+        # dwExtraInfo = 0 (ptr at offset 28 on 64bit, already zeroed)
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        user32.SendInput(1, ctypes.byref(inp), 40)
+
+    def _send_key_input(self, scan, flags):
+        """SendInput으로 키보드 이벤트 전송"""
+        # KEYBDINPUT: wVk(2) wScan(2) dwFlags(4) time(4) dwExtraInfo(ptr)
+        inp = (ctypes.c_byte * 40)()
+        struct.pack_into("I", inp, 0, self.INPUT_KEYBOARD)  # type
+        struct.pack_into("H", inp, 8, 0)           # wVk = 0 (scan code mode)
+        struct.pack_into("H", inp, 10, scan)        # wScan
+        struct.pack_into("I", inp, 12, flags)       # dwFlags
+        struct.pack_into("I", inp, 16, 0)           # time
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        user32.SendInput(1, ctypes.byref(inp), 40)
 
     def update_resolution(self, width, height):
         self.screen_width = width
@@ -486,5 +572,6 @@ class InputHandler:
         if self.handle:
             kernel32.CloseHandle(self.handle)
             self.handle = None
-            self.connected = False
-            print("  [Input] Driver handle closed")
+        self.connected = False
+        mode = "SendInput" if self.use_sendinput else "KSE driver"
+        print(f"  [Input] {mode} closed")
