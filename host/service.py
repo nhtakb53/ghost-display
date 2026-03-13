@@ -122,6 +122,33 @@ def build_command(config):
     return cmd
 
 
+def transfer_disconnected_session_to_console():
+    """Disconnected 상태의 사용자 세션을 콘솔로 전환 (tscon 자동 실행)
+
+    RDP를 그냥 끊으면 세션이 Disconnected 상태로 남아
+    콘솔에 데스크톱이 안 뜸 → DXGI 캡처 불가.
+    tscon으로 해당 세션을 콘솔로 전환하면 데스크톱이 살아남.
+    """
+    try:
+        sessions = win32ts.WTSEnumerateSessions(win32ts.WTS_CURRENT_SERVER_HANDLE)
+        for session in sessions:
+            if session['State'] == win32ts.WTSDisconnected and session['SessionId'] != 0:
+                sid = session['SessionId']
+                logging.info(f"Disconnected session {sid} found, transferring to console (tscon)...")
+                result = subprocess.run(
+                    ["tscon", str(sid), "/dest:console"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    logging.info(f"tscon succeeded: session {sid} → console")
+                    return True
+                else:
+                    logging.warning(f"tscon failed: {result.stderr.strip()}")
+    except Exception as e:
+        logging.error(f"transfer_disconnected_session_to_console error: {e}")
+    return False
+
+
 def get_active_session_id():
     """활성 사용자 세션 ID 반환 (콘솔 또는 RDP)"""
     # 먼저 콘솔 세션 확인
@@ -298,6 +325,13 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
 
             # 활성 사용자 세션 찾기
             session_id = get_active_session_id()
+            if session_id is None:
+                logging.info("No active user session, trying tscon transfer...")
+                # RDP 끊김 → Disconnected 세션을 콘솔로 자동 전환
+                if transfer_disconnected_session_to_console():
+                    time.sleep(2)  # 세션 전환 안정화 대기
+                    session_id = get_active_session_id()
+
             if session_id is None:
                 logging.info("No active user session, waiting...")
                 if win32event.WaitForSingleObject(self.stop_event, 5000) == win32event.WAIT_OBJECT_0:
