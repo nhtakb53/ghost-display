@@ -107,12 +107,23 @@ class DXGICapture:
         self._staging_tex = None
 
     def start(self):
-        """캡처 시작"""
+        """캡처 시작 (디스플레이 준비될 때까지 대기)"""
         self.running = True
         self.start_time = time.time()
         self.frame_count = 0
 
-        self._init_dxgi()
+        # RDP→콘솔 전환 시 디스플레이가 바로 안 잡힐 수 있으므로 재시도
+        for attempt in range(1, 31):
+            try:
+                self._init_dxgi()
+                break
+            except Exception as e:
+                if not self.running:
+                    return
+                print(f"  [Capture/DXGI] Init failed ({attempt}/30): {e}")
+                if attempt == 30:
+                    raise
+                time.sleep(2)
 
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
