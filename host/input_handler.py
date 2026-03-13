@@ -420,6 +420,11 @@ class InputHandler:
         if not self.handle:
             return False
 
+        if not hasattr(self, '_ioctl_count'):
+            self._ioctl_count = 0
+            self._ioctl_ok = 0
+            self._ioctl_fail = 0
+
         bytes_returned = ctypes.wintypes.DWORD(0)
         result = kernel32.DeviceIoControl(
             self.handle,
@@ -429,11 +434,27 @@ class InputHandler:
             ctypes.byref(bytes_returned),
             None
         )
+
+        self._ioctl_count += 1
+
         if not result:
+            self._ioctl_fail += 1
             err = ctypes.get_last_error()
-            print(f"  [Input] IOCTL failed: error {err}, cmd={req.cmd} sub={req.sub} status=0x{req.status:08X}")
-        elif req.status != 0:
-            print(f"  [Input] IOCTL ok but status=0x{req.status:08X}, cmd={req.cmd} sub={req.sub}")
+            if self._ioctl_fail <= 5 or self._ioctl_fail % 100 == 0:
+                print(f"  [Input] IOCTL failed ({self._ioctl_fail}): error {err}, cmd={req.cmd} sub={req.sub} status=0x{req.status:08X}")
+        else:
+            if req.status != 0:
+                if self._ioctl_count <= 5:
+                    print(f"  [Input] IOCTL ok but status=0x{req.status:08X}, cmd={req.cmd} sub={req.sub}")
+            else:
+                self._ioctl_ok += 1
+
+        # 처음 몇 개는 상세 로그
+        if self._ioctl_count <= 5:
+            print(f"  [Input] IOCTL #{self._ioctl_count}: cmd={req.cmd} sub={req.sub} result={bool(result)} status=0x{req.status:08X} bytes={bytes_returned.value}")
+        elif self._ioctl_count % 500 == 0:
+            print(f"  [Input] IOCTL stats: total={self._ioctl_count} ok={self._ioctl_ok} fail={self._ioctl_fail}")
+
         return bool(result)
 
     def handle_event(self, event):
