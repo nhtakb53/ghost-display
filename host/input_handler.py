@@ -503,6 +503,12 @@ class InputHandler:
         abs_x = int(x * 65535 / max(self.screen_width, 1))
         abs_y = int(y * 65535 / max(self.screen_height, 1))
 
+        if not hasattr(self, '_move_log_count'):
+            self._move_log_count = 0
+        self._move_log_count += 1
+        if self._move_log_count <= 10 or self._move_log_count % 100 == 0:
+            print(f"  [Input] mouse_move: raw=({x},{y}) abs=({abs_x},{abs_y}) screen=({self.screen_width}x{self.screen_height})")
+
         if self.use_sendinput:
             self._send_mouse_input(abs_x, abs_y,
                                    self.MOUSEEVENTF_MOVE | self.MOUSEEVENTF_ABSOLUTE,
@@ -520,6 +526,8 @@ class InputHandler:
 
     def _mouse_button(self, button, down):
         """마우스 버튼"""
+        print(f"  [Input] mouse_button: {button} {'down' if down else 'up'}")
+
         if self.use_sendinput:
             flag_map = {
                 ("left", True): self.MOUSEEVENTF_LEFTDOWN,
@@ -568,6 +576,7 @@ class InputHandler:
 
     def _key_event(self, scan, down, e0=False):
         """키보드 이벤트"""
+        print(f"  [Input] key: scan=0x{scan:02X} {'down' if down else 'up'} e0={e0}")
         if self.use_sendinput:
             flags = self.KEYEVENTF_SCANCODE
             if e0:
