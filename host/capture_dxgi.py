@@ -305,6 +305,10 @@ class DXGICapture:
             hr_unsigned = hr & 0xFFFFFFFF
 
             if hr_unsigned == DXGI_ERROR_WAIT_TIMEOUT:
+                # 정적 화면: 마지막 프레임을 반복 전달 (인코더에 입력이 없으면 뷰어가 멈춤)
+                with self.frame_lock:
+                    if self.latest_frame is not None:
+                        self.frame_event.set()
                 continue
             elif hr_unsigned in (DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL):
                 now = time.time()
