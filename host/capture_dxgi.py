@@ -10,7 +10,7 @@ import ctypes.wintypes
 import threading
 import time
 import numpy as np
-from ctypes import POINTER, byref, c_void_p, c_uint, c_int, HRESULT
+from ctypes import POINTER, byref, c_void_p, c_uint, c_int
 
 # COM GUIDs
 class GUID(ctypes.Structure):
@@ -133,7 +133,7 @@ class DXGICapture:
         ).contents
 
         # IDXGIFactory1::EnumAdapters (index 7)
-        EnumAdapters = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_uint, POINTER(c_void_p))(factory_vt[7])
+        EnumAdapters = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_uint, POINTER(c_void_p))(factory_vt[7])
         adapter = c_void_p()
         hr = EnumAdapters(factory, 0, byref(adapter))
         if hr != 0:
@@ -169,7 +169,7 @@ class DXGICapture:
         ).contents
 
         # IDXGIAdapter::EnumOutputs (index 7)
-        EnumOutputs = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_uint, POINTER(c_void_p))(adapter_vt[7])
+        EnumOutputs = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_uint, POINTER(c_void_p))(adapter_vt[7])
         output = c_void_p()
         hr = EnumOutputs(adapter, self.monitor_index, byref(output))
         if hr != 0:
@@ -182,7 +182,7 @@ class DXGICapture:
         ).contents
 
         # IUnknown::QueryInterface (index 0)
-        QueryInterface = ctypes.WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), POINTER(c_void_p))(output_vt[0])
+        QueryInterface = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, POINTER(GUID), POINTER(c_void_p))(output_vt[0])
         output1 = c_void_p()
         hr = QueryInterface(output, byref(IID_IDXGIOutput1), byref(output1))
         if hr != 0:
@@ -195,7 +195,7 @@ class DXGICapture:
         ).contents
 
         # IDXGIOutput1::DuplicateOutput (index 22)
-        DuplicateOutput = ctypes.WINFUNCTYPE(HRESULT, c_void_p, c_void_p, POINTER(c_void_p))(output1_vt[22])
+        DuplicateOutput = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_void_p, POINTER(c_void_p))(output1_vt[22])
         duplication = c_void_p()
         hr = DuplicateOutput(output1, device, byref(duplication))
         if hr != 0:
@@ -269,12 +269,13 @@ class DXGICapture:
         ).contents
 
         # IDXGIOutputDuplication::AcquireNextFrame (index 8)
+        # c_long 사용 (HRESULT는 에러 시 자동 예외 발생하므로)
         AcquireNextFrame = ctypes.WINFUNCTYPE(
-            HRESULT, c_void_p, c_uint, POINTER(DXGI_OUTDUPL_FRAME_INFO), POINTER(c_void_p)
+            ctypes.c_long, c_void_p, c_uint, POINTER(DXGI_OUTDUPL_FRAME_INFO), POINTER(c_void_p)
         )(dup_vt[8])
 
         # IDXGIOutputDuplication::ReleaseFrame (index 14)
-        ReleaseFrame = ctypes.WINFUNCTYPE(HRESULT, c_void_p)(dup_vt[14])
+        ReleaseFrame = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(dup_vt[14])
 
         while self.running:
             loop_start = time.time()
@@ -325,7 +326,7 @@ class DXGICapture:
             ctypes.cast(desktop_resource, POINTER(c_void_p))[0],
             POINTER(c_void_p * 5)
         ).contents
-        QueryInterface = ctypes.WINFUNCTYPE(HRESULT, c_void_p, POINTER(GUID), POINTER(c_void_p))(res_vt[0])
+        QueryInterface = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, POINTER(GUID), POINTER(c_void_p))(res_vt[0])
 
         texture = c_void_p()
         hr = QueryInterface(desktop_resource, byref(IID_ID3D11Texture2D), byref(texture))
