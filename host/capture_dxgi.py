@@ -472,19 +472,52 @@ class DXGICapture:
                 pass
             self._duplication = None
 
+        access_denied_count = 0
         for attempt in range(1, 61):
             if not self.running:
                 return
             try:
+                # 이전 device/context 정리 (재생성 전)
+                for obj_name in ['_staging_tex', '_context', '_device']:
+                    obj = getattr(self, obj_name, None)
+                    if obj and obj.value:
+                        try:
+                            vt = ctypes.cast(
+                                ctypes.cast(obj, POINTER(c_void_p))[0],
+                                POINTER(c_void_p * 3)
+                            ).contents
+                            Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(vt[2])
+                            Release(obj)
+                        except:
+                            pass
+                        setattr(self, obj_name, None)
+
                 self._init_dxgi()
                 print(f"  [Capture/DXGI] Reinitialized (attempt {attempt})")
                 return
             except Exception as e:
+                err_msg = str(e)
                 print(f"  [Capture/DXGI] Reinit failed ({attempt}): {e}")
+
+                # ACCESS_DENIED (0x80070005) = 세션 보안 컨텍스트 불일치
+                # → 프로세스 재시작 필요
+                if "0x80070005" in err_msg:
+                    access_denied_count += 1
+                    if access_denied_count >= 5:
+                        print(f"  [Capture/DXGI] ACCESS_DENIED 반복 — 세션 변경, 프로세스 종료")
+                        self.running = False
+                        import os, signal
+                        os.kill(os.getpid(), signal.SIGTERM)
+                        return
+                else:
+                    access_denied_count = 0
+
                 time.sleep(2)
 
-        print("  [Capture/DXGI] Reinit failed after 60 attempts")
+        print("  [Capture/DXGI] Reinit failed after 60 attempts, 프로세스 종료")
         self.running = False
+        import os, signal
+        os.kill(os.getpid(), signal.SIGTERM)
 
     def force_repeat(self, duration=5.0):
         """뷰어 연결 시 호출 — 일정 시간 동안 정적 화면에서도 프레임 반복 전달"""
