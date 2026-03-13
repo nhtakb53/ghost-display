@@ -196,9 +196,11 @@ class InputHandler:
     def handle_event(self, event):
         """Viewer에서 받은 입력 이벤트 처리"""
         if not self.connected:
+            print(f"  [Input] Event ignored (not connected): {event}")
             return
 
         evt_type = event.get("type")
+        print(f"  [Input] Event: {event}")
 
         if evt_type == "mouse_move":
             self._mouse_move(event["x"], event["y"])
