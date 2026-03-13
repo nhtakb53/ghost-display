@@ -2,3 +2,4 @@ windows-capture
 numpy
 pygame
 opencv-python
+miniupnpc

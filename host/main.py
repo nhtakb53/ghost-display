@@ -4,6 +4,7 @@ Ghost Display - Host
 """
 
 import sys
+import os
 import time
 import signal
 import argparse
@@ -14,6 +15,9 @@ from capture import ScreenCapture
 from encoder import H264Encoder
 from network import StreamServer
 from input_handler import InputHandler
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from common.upnp import setup_upnp, cleanup_upnp
 
 
 class GhostHost:
@@ -39,6 +43,19 @@ class GhostHost:
         print("=" * 50)
         print("  Ghost Display - Host")
         print("=" * 50)
+
+        # 0. UPnP 자동 포트포워딩
+        upnp_ok, external_ip = setup_upnp(
+            [self.args.video_port, self.args.control_port],
+            protocol="UDP",
+            description="Ghost Display"
+        )
+        # TCP 포트도 등록
+        setup_upnp([self.args.control_port], protocol="TCP", description="Ghost Display")
+        if upnp_ok:
+            print(f"  [Host] UPnP: 포트포워딩 완료 (외부 IP: {external_ip})")
+        else:
+            print(f"  [Host] UPnP: 자동 포트포워딩 실패 - 수동 설정 필요할 수 있음")
 
         # 1. 커널 드라이버 연결
         if not self.input_handler.connect():
@@ -176,6 +193,7 @@ class GhostHost:
         self.capture.stop()
         self.network.stop()
         self.input_handler.close()
+        cleanup_upnp()
         print("  [Host] Done.")
 
 

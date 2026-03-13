@@ -16,6 +16,9 @@ import numpy as np
 
 import pygame
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from common.upnp import setup_upnp, cleanup_upnp
+
 # 패킷 프로토콜
 HEADER_FMT = "!BBHI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
@@ -122,6 +125,13 @@ class GhostViewer:
         print("=" * 50)
 
         self.running = True
+
+        # 0. UPnP 자동 포트포워딩
+        upnp_ok, external_ip = setup_upnp([self.video_port])
+        if upnp_ok:
+            print(f"  [Viewer] UPnP: UDP {self.video_port} 포트포워딩 완료 (외부 IP: {external_ip})")
+        else:
+            print(f"  [Viewer] UPnP: 자동 포트포워딩 실패 - 수동 설정 필요할 수 있음")
 
         # 1. TCP 연결
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -486,6 +496,7 @@ class GhostViewer:
 
     def stop(self):
         self.running = False
+        cleanup_upnp()
         if self.decoder:
             try:
                 self.decoder.stdin.close()
