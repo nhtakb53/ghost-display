@@ -151,6 +151,8 @@ class GhostHost:
             )
             self.encoder.on_nal = self._on_nal
             self.encoder.start()
+            # 새 SPS/PPS가 나오면 연결된 viewer에게 재전송
+            self._need_resend_sps = True
         finally:
             self._encoder_lock.release()
 
@@ -191,6 +193,20 @@ class GhostHost:
 
     def _on_nal(self, nal_data, nal_type, is_keyframe):
         """NAL unit 콜백 — NAL 단위로 UDP 전송"""
+        # 인코더 재시작 후 새 SPS/PPS를 viewer에게 TCP로 재전송
+        if getattr(self, '_need_resend_sps', False) and self.encoder:
+            sps_pps = self.encoder.get_sps_pps()
+            if sps_pps:
+                self.network.send_sps_pps(sps_pps)
+                self.network.send_control({
+                    "cmd": "stream_info",
+                    "width": self.enc_w,
+                    "height": self.enc_h,
+                    "fps": self.args.fps,
+                    "codec": "h264",
+                })
+                print(f"  [Host] New SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
+                self._need_resend_sps = False
         self.network.send_video_nal(nal_data, nal_type, is_keyframe)
 
     def _on_viewer_connected(self, addr):
