@@ -218,7 +218,7 @@ class GhostHost:
         self.network.send_video_nal(nal_data, nal_type, is_keyframe)
 
     def _on_viewer_connected(self, addr):
-        """Viewer 연결 시 스트림 정보 전송 + 인코더 재시작으로 즉시 키프레임 생성"""
+        """Viewer 연결 시 SPS/PPS + 스트림 정보 즉시 전송"""
         if self.encoder:
             # 1. 스트림 정보 (TCP)
             self.network.send_control({
@@ -228,9 +228,11 @@ class GhostHost:
                 "fps": self.args.fps,
                 "codec": "h264",
             })
-            # 2. 인코더 재시작 → 새 SPS/PPS + 즉시 IDR 키프레임
-            print(f"  [Host] Viewer connected, restarting encoder for immediate keyframe")
-            self._restart_encoder()
+            # 2. SPS/PPS 즉시 전송 (TCP — 확실한 전달)
+            sps_pps = self.encoder.get_sps_pps()
+            if sps_pps:
+                self.network.send_sps_pps(sps_pps)
+                print(f"  [Host] SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
 
     def _print_stats(self):
         cap_fps = self.capture.get_fps()

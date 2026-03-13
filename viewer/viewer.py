@@ -167,7 +167,7 @@ class GhostViewer:
 
         # NAT 홀펀칭: 호스트에 UDP 패킷 먼저 보내서 NAT 매핑 생성
         punch = struct.pack(HEADER_FMT, PKT_PING, 0, 0, 0)
-        for _ in range(3):
+        for _ in range(10):
             self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
         print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port}")
 
@@ -176,23 +176,22 @@ class GhostViewer:
             while self.running:
                 try:
                     self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
-                    # Host의 STUN 주소로도 홀펀칭
                     if self.host_udp_addr:
                         self.udp_sock.sendto(punch, self.host_udp_addr)
                 except:
                     pass
-                time.sleep(5)
+                time.sleep(1)
         threading.Thread(target=_udp_keepalive, daemon=True).start()
 
         # 3. TCP 수신 스레드
         threading.Thread(target=self._tcp_recv_loop, daemon=True).start()
 
-        # SPS/PPS 대기
+        # SPS/PPS 대기 (최대 1초)
         print("  [Viewer] Waiting for SPS/PPS...")
-        for _ in range(30):
+        for _ in range(20):
             if self.got_sps_pps:
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
 
         # 4. FFmpeg 디코더 시작 (H.264 → raw BGR)
         self._start_decoder()
