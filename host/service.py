@@ -171,9 +171,22 @@ def get_active_session_id():
         if session['State'] == win32ts.WTSActive and session['SessionId'] != 0:
             return session['SessionId']
 
-    # 활성 세션 없으면 콘솔 세션이라도 반환
-    if console_session != 0xFFFFFFFF:
-        return console_session
+    # 활성 세션 없음 → Disconnected 세션을 콘솔로 전환 시도
+    if transfer_disconnected_session_to_console():
+        time.sleep(3)  # 세션 전환 안정화 대기
+        # 전환 후 다시 확인
+        console_session = win32ts.WTSGetActiveConsoleSessionId()
+        if console_session != 0xFFFFFFFF:
+            try:
+                state = win32ts.WTSQuerySessionInformation(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE,
+                    console_session,
+                    win32ts.WTSConnectState
+                )
+                if state == win32ts.WTSActive:
+                    return console_session
+            except:
+                pass
 
     return None
 
@@ -323,15 +336,8 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
             if win32event.WaitForSingleObject(self.stop_event, 0) == win32event.WAIT_OBJECT_0:
                 break
 
-            # 활성 사용자 세션 찾기
+            # 활성 사용자 세션 찾기 (없으면 내부에서 tscon 자동 시도)
             session_id = get_active_session_id()
-            if session_id is None:
-                logging.info("No active user session, trying tscon transfer...")
-                # RDP 끊김 → Disconnected 세션을 콘솔로 자동 전환
-                if transfer_disconnected_session_to_console():
-                    time.sleep(2)  # 세션 전환 안정화 대기
-                    session_id = get_active_session_id()
-
             if session_id is None:
                 logging.info("No active user session, waiting...")
                 if win32event.WaitForSingleObject(self.stop_event, 5000) == win32event.WAIT_OBJECT_0:
