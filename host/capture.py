@@ -1,6 +1,7 @@
 """
 WGC (Windows.Graphics.Capture) 화면 캡처 모듈
 windows-capture 패키지 사용 (Rust 백엔드)
+세션 끊김(RDP 해제 등) 시 자동 재연결
 """
 
 import threading
@@ -23,6 +24,7 @@ class ScreenCapture:
         self.height = 0
         self.frame_count = 0
         self.start_time = 0
+        self._session_active = False
 
     def start(self):
         """캡처 시작 (별도 스레드에서 실행)"""
@@ -30,14 +32,23 @@ class ScreenCapture:
         self.start_time = time.time()
         self.frame_count = 0
 
+        self._start_session()
+
+        # 재연결 감시 스레드
+        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+
+        print(f"  [Capture] Started (monitor {self.monitor_index}, target {self.target_fps}fps)")
+
+    def _start_session(self):
+        """캡처 세션 하나를 시작"""
+        self._session_active = True
+
         self.capture = WindowsCapture(
             cursor_capture=True,
             draw_border=False,
             monitor_index=self.monitor_index + 1,  # 1-based
         )
 
-        # windows-capture는 함수 이름으로 콜백을 구분함
-        # __name__이 "on_frame_arrived" / "on_closed" 여야 함
         this = self
 
         def on_frame_arrived(frame: Frame, control: InternalCaptureControl):
@@ -53,7 +64,6 @@ class ScreenCapture:
                 this.height = h
                 print(f"  [Capture] Resolution: {w}x{h}")
 
-            # frame.frame_buffer는 numpy array (BGRA)
             data = np.array(frame.frame_buffer, dtype=np.uint8).copy()
 
             with this.frame_lock:
@@ -64,22 +74,43 @@ class ScreenCapture:
 
         def on_closed():
             print("  [Capture] Session closed")
-            this.running = False
+            this._session_active = False
 
         self.capture.event(on_frame_arrived)
         self.capture.event(on_closed)
 
-        # windows-capture의 start()는 블로킹이므로 start_free_threaded 사용
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        print(f"  [Capture] Started (monitor {self.monitor_index}, target {self.target_fps}fps)")
 
     def _run(self):
         try:
             self.capture.start()
         except Exception as e:
             print(f"  [Capture] Error: {e}")
-            self.running = False
+            self._session_active = False
+
+    def _reconnect_loop(self):
+        """세션 끊김 감지 → 자동 재연결"""
+        while self.running:
+            time.sleep(2)
+            if not self._session_active and self.running:
+                print("  [Capture] Reconnecting...")
+                for attempt in range(1, 61):
+                    if not self.running:
+                        return
+                    try:
+                        self._start_session()
+                        # 프레임이 오는지 확인
+                        time.sleep(2)
+                        if self._session_active:
+                            print(f"  [Capture] Reconnected (attempt {attempt})")
+                            break
+                    except Exception as e:
+                        print(f"  [Capture] Reconnect failed ({attempt}): {e}")
+                    time.sleep(3)
+                else:
+                    print("  [Capture] Reconnect failed after 60 attempts, giving up")
+                    self.running = False
 
     def get_frame(self, timeout=0.1):
         """최신 프레임 가져오기 (블로킹)"""
