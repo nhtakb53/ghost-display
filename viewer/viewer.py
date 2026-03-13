@@ -18,11 +18,11 @@ import pygame
 
 # 모든 print에 타임스탬프 자동 추가
 import builtins
+from datetime import datetime
 _original_print = builtins.print
-_start_time = time.time()
 def _timed_print(*args, **kwargs):
-    elapsed = time.time() - _start_time
-    _original_print(f"[{elapsed:7.2f}s]", *args, **kwargs)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _original_print(f"{ts}", *args, **kwargs)
 builtins.print = _timed_print
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
