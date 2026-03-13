@@ -61,9 +61,13 @@ class StreamServer:
     def start(self):
         self.running = True
 
-        # UDP 소켓
+        # UDP 소켓 (바인딩해서 viewer의 홀펀치 패킷 수신)
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)
+        self.udp_sock.bind((self.host, self.video_port))
+
+        # UDP 수신 스레드 (홀펀치 패킷으로 viewer 주소 파악)
+        threading.Thread(target=self._udp_recv_loop, daemon=True).start()
 
         # TCP 소켓
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -156,6 +160,21 @@ class StreamServer:
             if self.tcp_addr:
                 self.viewer_addr = (self.tcp_addr[0], port)
                 print(f"  [Network] Viewer UDP target: {self.viewer_addr}")
+
+    def _udp_recv_loop(self):
+        """UDP 수신 - viewer의 홀펀치 패킷으로 실제 NAT 주소 파악"""
+        self.udp_sock.settimeout(1.0)
+        while self.running:
+            try:
+                data, addr = self.udp_sock.recvfrom(2048)
+                if addr != self.viewer_addr:
+                    self.viewer_addr = addr
+                    print(f"  [Network] Viewer UDP address (hole-punch): {addr[0]}:{addr[1]}")
+            except socket.timeout:
+                continue
+            except Exception:
+                if not self.running:
+                    break
 
     def send_video_nal(self, nal_data, nal_type, is_keyframe=False):
         """하나의 NAL unit을 UDP로 전송 (필요시 분할)"""

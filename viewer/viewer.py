@@ -140,6 +140,12 @@ class GhostViewer:
         self.udp_sock.bind(("0.0.0.0", self.video_port))
         self.udp_sock.settimeout(0.5)
 
+        # NAT 홀펀칭: 호스트에 UDP 패킷 먼저 보내서 NAT 매핑 생성
+        punch = struct.pack(HEADER_FMT, PKT_CONTROL, 0, 0, 0)
+        for _ in range(3):
+            self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
+        print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port}")
+
         # 3. TCP 수신 스레드
         threading.Thread(target=self._tcp_recv_loop, daemon=True).start()
 
