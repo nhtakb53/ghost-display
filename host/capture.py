@@ -95,14 +95,17 @@ class ScreenCapture:
         while self.running:
             time.sleep(2)
             if not self._session_active and self.running:
+                # 세션 전환이 안정화될 때까지 대기
+                print("  [Capture] Session lost, waiting 5s for session to stabilize...")
+                time.sleep(5)
                 print("  [Capture] Reconnecting...")
                 for attempt in range(1, 61):
                     if not self.running:
                         return
                     try:
                         self._start_session()
-                        # 프레임이 오는지 확인
-                        time.sleep(2)
+                        # 프레임이 안정적으로 오는지 확인 (5초)
+                        time.sleep(5)
                         if self._session_active:
                             print(f"  [Capture] Reconnected (attempt {attempt})")
                             if self.on_reconnect:
@@ -110,7 +113,7 @@ class ScreenCapture:
                             break
                     except Exception as e:
                         print(f"  [Capture] Reconnect failed ({attempt}): {e}")
-                    time.sleep(3)
+                    time.sleep(5)
                 else:
                     print("  [Capture] Reconnect failed after 60 attempts, giving up")
                     self.running = False
