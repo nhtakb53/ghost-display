@@ -9,6 +9,11 @@ import struct
 import threading
 import json
 import time
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from common.stun import stun_get_mapped_address
 
 
 # 패킷 헤더 (8 bytes)
@@ -65,6 +70,15 @@ class StreamServer:
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2 * 1024 * 1024)
         self.udp_sock.bind((self.host, self.video_port))
+
+        # STUN으로 UDP 소켓의 공인 주소 확인
+        self.stun_addr = None
+        stun_result = stun_get_mapped_address(self.udp_sock)
+        if stun_result:
+            self.stun_addr = stun_result
+            print(f"  [Network] STUN: 공인 UDP 주소 {stun_result[0]}:{stun_result[1]}")
+        else:
+            print(f"  [Network] STUN: 공인 주소 확인 실패")
 
         # UDP 수신 스레드 (홀펀치 패킷으로 viewer 주소 파악)
         threading.Thread(target=self._udp_recv_loop, daemon=True).start()
@@ -160,6 +174,23 @@ class StreamServer:
             if self.tcp_addr:
                 self.viewer_addr = (self.tcp_addr[0], port)
                 print(f"  [Network] Viewer UDP target: {self.viewer_addr}")
+            # Host의 STUN 주소를 Viewer에게 전송
+            if self.stun_addr:
+                self.send_control({"cmd": "host_udp_addr", "ip": self.stun_addr[0], "port": self.stun_addr[1]})
+                print(f"  [Network] Host STUN 주소 전송: {self.stun_addr[0]}:{self.stun_addr[1]}")
+        elif cmd == "set_udp_addr":
+            # Viewer의 STUN 기반 공인 주소
+            ip = ctrl.get("ip")
+            port = ctrl.get("port")
+            if ip and port:
+                old = self.viewer_addr
+                self.viewer_addr = (ip, port)
+                print(f"  [Network] Viewer STUN 주소: {ip}:{port} (기존: {old})")
+                # Viewer에게 홀펀칭 패킷 전송
+                punch = struct.pack(HEADER_FMT, PKT_PONG, 0, 0, 0)
+                for _ in range(5):
+                    self.udp_sock.sendto(punch, (ip, port))
+                print(f"  [Network] STUN 기반 hole-punch → {ip}:{port}")
 
     def _udp_recv_loop(self):
         """UDP 수신 - viewer의 홀펀치 패킷으로 실제 NAT 주소 파악"""

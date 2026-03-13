@@ -18,6 +18,7 @@ import pygame
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.upnp import setup_upnp, cleanup_upnp
+from common.stun import stun_get_mapped_address
 
 # 패킷 프로토콜
 HEADER_FMT = "!BBHI"
@@ -150,20 +151,36 @@ class GhostViewer:
         self.udp_sock.bind(("0.0.0.0", self.video_port))
         self.udp_sock.settimeout(0.5)
 
+        # 2-1. STUN으로 공인 주소 확인
+        stun_result = stun_get_mapped_address(self.udp_sock)
+        if stun_result:
+            pub_ip, pub_port = stun_result
+            print(f"  [Viewer] STUN: 공인 주소 {pub_ip}:{pub_port}")
+            # Host에게 실제 공인 UDP 주소 알려주기
+            self._send_control({"cmd": "set_udp_addr", "ip": pub_ip, "port": pub_port})
+        else:
+            print(f"  [Viewer] STUN: 공인 주소 확인 실패")
+
+        # 2-2. Host의 STUN 주소 수신 대기용
+        self.host_udp_addr = None
+
         # NAT 홀펀칭: 호스트에 UDP 패킷 먼저 보내서 NAT 매핑 생성
         punch = struct.pack(HEADER_FMT, PKT_PING, 0, 0, 0)
         for _ in range(3):
             self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
         print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port}")
 
-        # 주기적 NAT keep-alive (매핑 만료 방지)
+        # 주기적 NAT keep-alive + 홀펀칭 (매핑 만료 방지)
         def _udp_keepalive():
             while self.running:
                 try:
                     self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
+                    # Host의 STUN 주소로도 홀펀칭
+                    if self.host_udp_addr:
+                        self.udp_sock.sendto(punch, self.host_udp_addr)
                 except:
                     pass
-                time.sleep(10)
+                time.sleep(5)
         threading.Thread(target=_udp_keepalive, daemon=True).start()
 
         # 3. TCP 수신 스레드
@@ -493,6 +510,17 @@ class GhostViewer:
             self.stream_height = ctrl.get("height", 1080)
             print(f"  [Viewer] Stream: {self.stream_width}x{self.stream_height} "
                   f"@ {ctrl.get('fps')}fps")
+        elif cmd == "host_udp_addr":
+            ip = ctrl.get("ip")
+            port = ctrl.get("port")
+            if ip and port:
+                self.host_udp_addr = (ip, port)
+                print(f"  [Viewer] Host STUN 주소: {ip}:{port}")
+                # 즉시 홀펀칭
+                punch = struct.pack(HEADER_FMT, PKT_PING, 0, 0, 0)
+                for _ in range(5):
+                    self.udp_sock.sendto(punch, (ip, port))
+                print(f"  [Viewer] STUN 기반 hole-punch → {ip}:{port}")
 
     def _send_control(self, data):
         payload = json.dumps(data).encode("utf-8")
