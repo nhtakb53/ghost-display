@@ -140,28 +140,6 @@ def launch_in_session(session_id, cmd, log_file):
     si.wShowWindow = win32con.SW_HIDE
     si.lpDesktop = "winsta0\\default"
 
-    # stdout/stderr를 로그 파일로 리다이렉트
-    log_handle = win32api.CreateFile(
-        log_file,
-        win32con.GENERIC_WRITE,
-        win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
-        None,
-        win32con.OPEN_ALWAYS,
-        0,
-        None
-    )
-    # 파일 끝으로 이동 (append)
-    win32api.SetFilePointer(log_handle, 0, win32con.FILE_END)
-
-    # 핸들 상속 가능하도록 보안 속성 설정
-    import pywintypes
-    sa = pywintypes.SECURITY_ATTRIBUTES()
-    sa.bInheritHandle = True
-
-    si.dwFlags |= win32con.STARTF_USESTDHANDLES
-    si.hStdOutput = log_handle
-    si.hStdError = log_handle
-
     # CreateProcessAsUser로 사용자 세션에서 실행
     proc_info = win32process.CreateProcessAsUser(
         token,              # 사용자 토큰
@@ -169,7 +147,7 @@ def launch_in_session(session_id, cmd, log_file):
         cmd,                # lpCommandLine
         None,               # lpProcessAttributes
         None,               # lpThreadAttributes
-        True,               # bInheritHandles
+        False,              # bInheritHandles
         win32con.CREATE_NEW_CONSOLE | win32con.CREATE_UNICODE_ENVIRONMENT,
         env,                # lpEnvironment
         SCRIPT_DIR,         # lpCurrentDirectory
@@ -178,7 +156,6 @@ def launch_in_session(session_id, cmd, log_file):
 
     handle, thread_handle, pid, tid = proc_info
     win32api.CloseHandle(thread_handle)
-    win32api.CloseHandle(log_handle)
 
     return handle, pid
 
