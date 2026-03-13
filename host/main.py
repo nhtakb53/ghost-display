@@ -130,19 +130,25 @@ class GhostHost:
         self._restart_encoder()
 
     def _restart_encoder(self):
-        """인코더 재시작"""
-        print("  [Host] Restarting encoder...")
-        if self.encoder:
-            self.encoder.stop()
-        self.encoder = H264Encoder(
-            width=self.enc_w,
-            height=self.enc_h,
-            fps=self.args.fps,
-            bitrate=self.args.bitrate,
-            use_nvenc=not self.args.software,
-        )
-        self.encoder.on_nal = self._on_nal
-        self.encoder.start()
+        """인코더 재시작 (스레드 안전)"""
+        if hasattr(self, '_restarting_encoder') and self._restarting_encoder:
+            return
+        self._restarting_encoder = True
+        try:
+            print("  [Host] Restarting encoder...")
+            if self.encoder:
+                self.encoder.stop()
+            self.encoder = H264Encoder(
+                width=self.enc_w,
+                height=self.enc_h,
+                fps=self.args.fps,
+                bitrate=self.args.bitrate,
+                use_nvenc=not self.args.software,
+            )
+            self.encoder.on_nal = self._on_nal
+            self.encoder.start()
+        finally:
+            self._restarting_encoder = False
 
     def _main_loop(self):
         """캡처 → 리사이즈 → 인코딩 메인 루프"""
@@ -155,9 +161,6 @@ class GhostHost:
 
             frame = self.capture.get_frame(timeout=frame_interval)
             if frame is None:
-                # 인코더가 죽었으면 캡처 복구 대기
-                if self.encoder and not self.encoder.running:
-                    time.sleep(1)
                 continue
 
             # Python에서 리사이즈 (cv2 사용, FFmpeg 파이프 병목 해소)
@@ -165,10 +168,6 @@ class GhostHost:
             if w != self.enc_w or h != self.enc_h:
                 frame = cv2.resize(frame, (self.enc_w, self.enc_h),
                                    interpolation=cv2.INTER_LINEAR)
-
-            # 인코더가 죽었으면 재시작
-            if self.encoder and not self.encoder.running:
-                self._restart_encoder()
 
             # 인코딩
             if self.encoder and self.encoder.running:
