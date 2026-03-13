@@ -136,6 +136,7 @@ class GhostViewer:
 
         # 1. TCP 연결
         t0 = time.time()
+        self._connect_start = t0
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
@@ -264,7 +265,7 @@ class GhostViewer:
                     del buf[:frame_size]
 
                     if first_frame:
-                        print(f"  [Viewer] *** First frame decoded! ***")
+                        print(f"  [Viewer] *** First frame decoded! (+{time.time()-self._connect_start:.1f}s) ***")
                         first_frame = False
 
                     frame = np.frombuffer(frame_data, dtype=np.uint8).reshape(
@@ -376,6 +377,9 @@ class GhostViewer:
             # 새 프레임 표시
             with self.frame_lock:
                 if self.new_frame and self.latest_surface:
+                    if not hasattr(self, '_first_render_logged'):
+                        print(f"  [Viewer] *** First frame rendered! (+{time.time()-self._connect_start:.1f}s) ***")
+                        self._first_render_logged = True
                     scaled = pygame.transform.scale(self.latest_surface, (display_w, display_h))
                     screen.blit(scaled, (0, 0))
                     self.new_frame = False
