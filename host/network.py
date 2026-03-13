@@ -103,6 +103,7 @@ class StreamServer:
         while self.running:
             try:
                 conn, addr = self.tcp_sock.accept()
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.tcp_conn = conn
                 self.tcp_addr = addr
                 # viewer의 UDP 주소도 같은 IP로 설정

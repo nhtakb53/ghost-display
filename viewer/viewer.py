@@ -136,6 +136,7 @@ class GhostViewer:
 
         # 1. TCP 연결
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
             self.tcp_sock.connect((self.host_ip, self.control_port))
         except ConnectionRefusedError:
