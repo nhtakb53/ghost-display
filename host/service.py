@@ -70,9 +70,28 @@ def load_config():
         return DEFAULT_CONFIG.copy()
 
 
+def find_python():
+    """python.exe 경로 찾기 (pythonservice.exe가 아닌 실제 python)"""
+    exe = sys.executable
+    # 서비스에서 실행 시 pythonservice.exe가 될 수 있음
+    if "pythonservice" in os.path.basename(exe).lower():
+        python_dir = os.path.dirname(exe)
+        for name in ["python.exe", "python3.exe"]:
+            candidate = os.path.join(python_dir, name)
+            if os.path.exists(candidate):
+                return candidate
+        # Scripts 상위 폴더 확인
+        parent = os.path.dirname(python_dir)
+        for name in ["python.exe", "python3.exe"]:
+            candidate = os.path.join(parent, name)
+            if os.path.exists(candidate):
+                return candidate
+    return exe
+
+
 def build_command(config):
     """설정에서 main.py 실행 명령어 생성"""
-    python_exe = sys.executable
+    python_exe = find_python()
     main_py = os.path.join(SCRIPT_DIR, "main.py")
 
     cmd = f'"{python_exe}" "{main_py}"'
