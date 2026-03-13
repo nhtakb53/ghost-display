@@ -234,6 +234,10 @@ class GhostHost:
                 self.network.send_sps_pps(sps_pps)
                 print(f"  [Host] SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
 
+        # 3. DXGI 캡처: 정적 화면에서도 프레임 반복 전달 (연결 안정화)
+        if hasattr(self.capture, 'force_repeat'):
+            self.capture.force_repeat(duration=5.0)
+
     def _print_stats(self):
         cap_fps = self.capture.get_fps()
         enc_fps = self.encoder.get_fps() if self.encoder else 0

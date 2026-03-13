@@ -100,6 +100,9 @@ class DXGICapture:
         self._consecutive_reinits = 0
         self._last_reinit_time = 0
 
+        # 뷰어 연결 시 일시적 프레임 반복 모드
+        self._force_repeat_until = 0
+
         # COM objects
         self._device = None
         self._context = None
@@ -305,10 +308,11 @@ class DXGICapture:
             hr_unsigned = hr & 0xFFFFFFFF
 
             if hr_unsigned == DXGI_ERROR_WAIT_TIMEOUT:
-                # 정적 화면: 마지막 프레임을 반복 전달 (인코더에 입력이 없으면 뷰어가 멈춤)
-                with self.frame_lock:
-                    if self.latest_frame is not None:
-                        self.frame_event.set()
+                # 뷰어 연결 직후에만 마지막 프레임 반복 (연결 안정화)
+                if time.time() < self._force_repeat_until:
+                    with self.frame_lock:
+                        if self.latest_frame is not None:
+                            self.frame_event.set()
                 continue
             elif hr_unsigned in (DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL):
                 now = time.time()
@@ -479,6 +483,11 @@ class DXGICapture:
 
         print("  [Capture/DXGI] Reinit failed after 60 attempts")
         self.running = False
+
+    def force_repeat(self, duration=5.0):
+        """뷰어 연결 시 호출 — 일정 시간 동안 정적 화면에서도 프레임 반복 전달"""
+        self._force_repeat_until = time.time() + duration
+        print(f"  [Capture/DXGI] 프레임 반복 모드 {duration}초 활성화")
 
     def get_frame(self, timeout=0.1):
         """최신 프레임 가져오기 (블로킹) — WGC와 동일 인터페이스"""
