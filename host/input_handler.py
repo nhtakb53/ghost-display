@@ -317,15 +317,24 @@ def get_device_path():
 class InputHandler:
     """입력 인젝션 - KSE 커널 드라이버 우선, 실패 시 SendInput 폴백"""
 
-    def __init__(self, screen_width=1920, screen_height=1080):
+    def __init__(self, screen_width=1920, screen_height=1080, force_sendinput=False):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.handle = None
         self.connected = False
-        self.use_sendinput = False  # SendInput 폴백 모드
+        self.use_sendinput = False
+        self.force_sendinput = force_sendinput
 
     def connect(self):
         """커널 드라이버에 연결 시도, 실패 시 SendInput 모드"""
+        # 강제 SendInput 모드
+        if self.force_sendinput:
+            print("  [Input] Forced SendInput mode (--sendinput)")
+            self.use_sendinput = True
+            self.connected = True
+            print("  [Input] SendInput mode active")
+            return True
+
         # 1. KSE 드라이버 시도
         if self._connect_kse():
             return True
