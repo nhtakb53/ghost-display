@@ -73,6 +73,7 @@ class GhostHost:
         self.network.start()
 
         # 3. 캡처 시작
+        self.capture.on_reconnect = self._on_capture_reconnect
         self.capture.start()
 
         # 첫 프레임 대기 (해상도 확인)
@@ -123,6 +124,10 @@ class GhostHost:
         print(f"  [Host] Press Ctrl+C to stop\n")
 
         self._main_loop()
+
+    def _on_capture_reconnect(self):
+        """캡처 세션 재연결 시 호출"""
+        self._restart_encoder()
 
     def _restart_encoder(self):
         """인코더 재시작"""

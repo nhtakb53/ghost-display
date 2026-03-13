@@ -25,6 +25,7 @@ class ScreenCapture:
         self.frame_count = 0
         self.start_time = 0
         self._session_active = False
+        self.on_reconnect = None  # 재연결 콜백
 
     def start(self):
         """캡처 시작 (별도 스레드에서 실행)"""
@@ -104,6 +105,8 @@ class ScreenCapture:
                         time.sleep(2)
                         if self._session_active:
                             print(f"  [Capture] Reconnected (attempt {attempt})")
+                            if self.on_reconnect:
+                                self.on_reconnect()
                             break
                     except Exception as e:
                         print(f"  [Capture] Reconnect failed ({attempt}): {e}")
