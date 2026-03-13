@@ -213,7 +213,7 @@ class GhostViewer:
         cmd = [
             ffmpeg,
             "-hide_banner",
-            "-loglevel", "warning",
+            "-loglevel", "error",
             "-flags", "low_delay",
             "-fflags", "nobuffer",
             "-f", "h264",
@@ -245,41 +245,24 @@ class GhostViewer:
     def _read_decoded_frames(self):
         """FFmpeg stdout에서 raw 프레임 읽기 → pygame Surface 변환"""
         frame_size = self.stream_width * self.stream_height * 3  # BGR24
-        frame_count = 0
         buf = bytearray()
 
         while self.running and self.decoder:
             try:
-                # 청크 단위로 읽기 (블로킹 최소화)
                 chunk = self.decoder.stdout.read(min(65536, frame_size - len(buf)))
                 if not chunk:
-                    print(f"  [Viewer] Decoder EOF: buf={len(buf)}/{frame_size} bytes after {frame_count} frames")
-                    if self.decoder:
-                        ret = self.decoder.poll()
-                        print(f"  [Viewer] FFmpeg exit code: {ret}")
                     break
 
                 buf.extend(chunk)
 
-                if frame_count == 0 and len(buf) > 0 and len(buf) < frame_size:
-                    # 첫 프레임 대기 중 진행 상황
-                    if len(buf) % 65536 == 0 or len(buf) == len(chunk):
-                        print(f"  [Viewer] Decoder buffering: {len(buf)}/{frame_size} bytes ({100*len(buf)/frame_size:.1f}%)")
-
-                # 프레임 완성 시
                 while len(buf) >= frame_size:
                     frame_data = bytes(buf[:frame_size])
                     del buf[:frame_size]
 
-                    # BGR → pygame Surface
                     frame = np.frombuffer(frame_data, dtype=np.uint8).reshape(
                         self.stream_height, self.stream_width, 3)
                     rgb = np.ascontiguousarray(frame[:, :, ::-1])
                     surface = pygame.surfarray.make_surface(rgb.transpose(1, 0, 2))
-
-                    frame_count += 1
-                    if frame_count in (1, 5, 10, 30):
-                        print(f"  [Viewer] Frame #{frame_count} decoded")
 
                     with self.frame_lock:
                         self.latest_surface = surface
@@ -305,17 +288,8 @@ class GhostViewer:
         if self.decoder and self.decoder.poll() is None:
             try:
                 self.decoder.stdin.write(data)
-                self._decoder_bytes_fed = getattr(self, '_decoder_bytes_fed', 0) + len(data)
-                if self._decoder_bytes_fed in range(len(data), len(data) + 1):
-                    # 첫 번째 feed
-                    nal_type = -1
-                    if data[:4] == b'\x00\x00\x00\x01' and len(data) > 4:
-                        nal_type = data[4] & 0x1F
-                    elif data[:3] == b'\x00\x00\x01' and len(data) > 3:
-                        nal_type = data[3] & 0x1F
-                    print(f"  [Viewer] First data fed to decoder: {len(data)} bytes, NAL type={nal_type}")
-            except (BrokenPipeError, OSError) as e:
-                print(f"  [Viewer] Decoder write error: {e}")
+            except (BrokenPipeError, OSError):
+                pass
 
     def _pygame_loop(self):
         """pygame 메인 루프: 화면 표시 + 입력 캡처"""
@@ -421,16 +395,9 @@ class GhostViewer:
     # --- 네트워크 ---
 
     def _udp_recv_loop(self):
-        udp_timeout_count = 0
-        first_packet = True
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
-                if first_packet:
-                    print(f"  [Viewer] UDP: first packet received from {addr[0]}:{addr[1]} ({len(data)} bytes)")
-                    first_packet = False
-                udp_timeout_count = 0
-
                 if len(data) < HEADER_SIZE:
                     continue
 
@@ -442,10 +409,6 @@ class GhostViewer:
                 self.bytes_received += len(data)
 
             except socket.timeout:
-                udp_timeout_count += 1
-                if udp_timeout_count % 10 == 1:
-                    print(f"  [Viewer] UDP: no packets received ({udp_timeout_count * 0.5:.0f}s elapsed, "
-                          f"total received: {self.bytes_received} bytes, {self.nals_received} NALs)")
                 continue
             except Exception as e:
                 if self.running:
@@ -466,7 +429,6 @@ class GhostViewer:
         if self.waiting_for_keyframe:
             if flags & FLAG_KEYFRAME:
                 self.waiting_for_keyframe = False
-                print(f"  [Viewer] Keyframe received ({len(nal_data)} bytes), decoding started")
             elif self._is_sps_or_pps(nal_data):
                 pass
             else:
@@ -474,15 +436,6 @@ class GhostViewer:
 
         self._feed_decoder(nal_data)
         self.nals_received += 1
-        if self.nals_received in (1, 10, 50, 100, 200):
-            # NAL 타입 파악
-            nal_type = -1
-            if nal_data[:4] == b'\x00\x00\x00\x01' and len(nal_data) > 4:
-                nal_type = nal_data[4] & 0x1F
-            elif nal_data[:3] == b'\x00\x00\x01' and len(nal_data) > 3:
-                nal_type = nal_data[3] & 0x1F
-            fed = getattr(self, '_decoder_bytes_fed', 0)
-            print(f"  [Viewer] NAL #{self.nals_received}: type={nal_type}, {len(nal_data)}B, total fed={fed}B")
 
     def _is_sps_or_pps(self, data):
         if data[:4] == b'\x00\x00\x00\x01':

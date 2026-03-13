@@ -195,28 +195,17 @@ class StreamServer:
     def _udp_recv_loop(self):
         """UDP 수신 - viewer의 홀펀치 패킷으로 실제 NAT 주소 파악"""
         self.udp_sock.settimeout(1.0)
-        recv_count = 0
-        timeout_count = 0
-        print(f"  [Network] UDP recv loop started on :{self.video_port}")
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(2048)
-                recv_count += 1
-                if recv_count <= 3:
-                    print(f"  [Network] UDP received #{recv_count}: {len(data)} bytes from {addr[0]}:{addr[1]}")
                 if addr != self.viewer_addr:
-                    old = self.viewer_addr
                     self.viewer_addr = addr
-                    print(f"  [Network] Viewer UDP address updated: {old} -> {addr[0]}:{addr[1]}")
+                    print(f"  [Network] Viewer UDP address (hole-punch): {addr[0]}:{addr[1]}")
             except socket.timeout:
-                timeout_count += 1
-                if timeout_count % 10 == 1:
-                    print(f"  [Network] UDP recv: no hole-punch received ({timeout_count}s, viewer_addr={self.viewer_addr})")
                 continue
-            except Exception as e:
+            except Exception:
                 if not self.running:
                     break
-                print(f"  [Network] UDP recv error: {e}")
 
     def send_video_nal(self, nal_data, nal_type, is_keyframe=False):
         """하나의 NAL unit을 UDP로 전송 (필요시 분할)"""
@@ -248,11 +237,8 @@ class StreamServer:
             self.udp_sock.sendto(header + payload, self.viewer_addr)
             self.bytes_sent += len(header) + len(payload)
             self.packets_sent += 1
-            if self.packets_sent == 1:
-                print(f"  [Network] UDP: first packet sent to {self.viewer_addr} ({len(header) + len(payload)} bytes)")
-        except Exception as e:
-            if self.packets_sent == 0:
-                print(f"  [Network] UDP send error: {e} (target: {self.viewer_addr})")
+        except Exception:
+            pass
 
     def _send_tcp(self, pkt_type, payload=b""):
         """TCP 패킷 전송"""
