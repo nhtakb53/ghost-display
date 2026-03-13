@@ -247,7 +247,7 @@ class DXGICapture:
 
         # ID3D11Device::CreateTexture2D (index 5)
         CreateTexture2D = ctypes.WINFUNCTYPE(
-            HRESULT, c_void_p, POINTER(D3D11_TEXTURE2D_DESC), c_void_p, POINTER(c_void_p)
+            ctypes.c_long, c_void_p, POINTER(D3D11_TEXTURE2D_DESC), c_void_p, POINTER(c_void_p)
         )(device_vt[5])
 
         staging = c_void_p()
@@ -366,7 +366,7 @@ class DXGICapture:
             # Map → 읽기 → Unmap
             # ID3D11DeviceContext::Map (index 14)
             Map = ctypes.WINFUNCTYPE(
-                HRESULT, c_void_p, c_void_p, c_uint, c_uint, c_uint, POINTER(D3D11_MAPPED_SUBRESOURCE)
+                ctypes.c_long, c_void_p, c_void_p, c_uint, c_uint, c_uint, POINTER(D3D11_MAPPED_SUBRESOURCE)
             )(ctx_vt[14])
             mapped = D3D11_MAPPED_SUBRESOURCE()
             hr = Map(self._context, self._staging_tex, 0, D3D11_MAP_READ, 0, byref(mapped))
