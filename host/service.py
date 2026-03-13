@@ -94,20 +94,24 @@ def build_command(config):
     python_exe = find_python()
     main_py = os.path.join(SCRIPT_DIR, "main.py")
 
-    cmd = f'"{python_exe}" "{main_py}"'
-    cmd += f' --capture-mode {config["capture_mode"]}'
-    cmd += f' --monitor {config["monitor"]}'
-    cmd += f' --fps {config["fps"]}'
-    cmd += f' --bitrate {config["bitrate"]}'
-    cmd += f' --video-port {config["video_port"]}'
-    cmd += f' --control-port {config["control_port"]}'
-    cmd += f' --scale {config["scale"]}'
+    log_file = os.path.join(SCRIPT_DIR, "ghost-host.log")
+
+    args = f'--capture-mode {config["capture_mode"]}'
+    args += f' --monitor {config["monitor"]}'
+    args += f' --fps {config["fps"]}'
+    args += f' --bitrate {config["bitrate"]}'
+    args += f' --video-port {config["video_port"]}'
+    args += f' --control-port {config["control_port"]}'
+    args += f' --scale {config["scale"]}'
     if config.get("software"):
-        cmd += ' --software'
+        args += ' --software'
     if config.get("no_virtual_display"):
-        cmd += ' --no-virtual-display'
+        args += ' --no-virtual-display'
     if config.get("sendinput"):
-        cmd += ' --sendinput'
+        args += ' --sendinput'
+
+    # cmd /c로 감싸서 stdout/stderr를 로그 파일로 리다이렉트
+    cmd = f'cmd /c ""{python_exe}" "{main_py}" {args} >> "{log_file}" 2>&1"'
     return cmd
 
 
