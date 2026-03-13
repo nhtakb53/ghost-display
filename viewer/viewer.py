@@ -16,6 +16,15 @@ import numpy as np
 
 import pygame
 
+# 모든 print에 타임스탬프 자동 추가
+import builtins
+_original_print = builtins.print
+_start_time = time.time()
+def _timed_print(*args, **kwargs):
+    elapsed = time.time() - _start_time
+    _original_print(f"[{elapsed:7.2f}s]", *args, **kwargs)
+builtins.print = _timed_print
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.upnp import setup_upnp, cleanup_upnp
 from common.stun import stun_get_mapped_address
@@ -135,8 +144,6 @@ class GhostViewer:
             print(f"  [Viewer] UPnP: 자동 포트포워딩 실패 - 수동 설정 필요할 수 있음")
 
         # 1. TCP 연결
-        t0 = time.time()
-        self._connect_start = t0
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
@@ -144,7 +151,7 @@ class GhostViewer:
         except ConnectionRefusedError:
             print(f"  [!] Cannot connect to {self.host_ip}:{self.control_port}")
             return
-        print(f"  [Viewer] TCP connected to {self.host_ip} (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] TCP connected to {self.host_ip}")
 
         self._send_control({"cmd": "set_udp_port", "port": self.video_port})
 
@@ -158,10 +165,10 @@ class GhostViewer:
         stun_result = stun_get_mapped_address(self.udp_sock)
         if stun_result:
             pub_ip, pub_port = stun_result
-            print(f"  [Viewer] STUN: 공인 주소 {pub_ip}:{pub_port} (+{time.time()-t0:.1f}s)")
+            print(f"  [Viewer] STUN: 공인 주소 {pub_ip}:{pub_port}")
             self._send_control({"cmd": "set_udp_addr", "ip": pub_ip, "port": pub_port})
         else:
-            print(f"  [Viewer] STUN: 공인 주소 확인 실패 (+{time.time()-t0:.1f}s)")
+            print(f"  [Viewer] STUN: 공인 주소 확인 실패")
 
         # 2-2. Host의 STUN 주소 수신 대기용
         self.host_udp_addr = None
@@ -170,7 +177,7 @@ class GhostViewer:
         punch = struct.pack(HEADER_FMT, PKT_PING, 0, 0, 0)
         for _ in range(10):
             self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
-        print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port} (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port}")
 
         # 주기적 NAT keep-alive + 홀펀칭 (매핑 만료 방지)
         def _udp_keepalive():
@@ -188,16 +195,16 @@ class GhostViewer:
         threading.Thread(target=self._tcp_recv_loop, daemon=True).start()
 
         # SPS/PPS 대기 (최대 1초)
-        print(f"  [Viewer] Waiting for SPS/PPS... (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] Waiting for SPS/PPS...")
         for _ in range(20):
             if self.got_sps_pps:
                 break
             time.sleep(0.05)
-        print(f"  [Viewer] SPS/PPS {'received' if self.got_sps_pps else 'TIMEOUT'} (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] SPS/PPS {'received' if self.got_sps_pps else 'TIMEOUT'}")
 
         # 4. FFmpeg 디코더 시작 (H.264 → raw BGR)
         self._start_decoder()
-        print(f"  [Viewer] Decoder ready (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] Decoder ready")
 
         # SPS/PPS 주입
         if self.sps_pps_data:
@@ -206,7 +213,7 @@ class GhostViewer:
 
         # 5. UDP 수신 스레드
         threading.Thread(target=self._udp_recv_loop, daemon=True).start()
-        print(f"  [Viewer] UDP recv started (+{time.time()-t0:.1f}s)")
+        print(f"  [Viewer] UDP recv started")
 
         # 6. pygame 메인 루프 (표시 + 입력)
         self._pygame_loop()
@@ -265,7 +272,7 @@ class GhostViewer:
                     del buf[:frame_size]
 
                     if first_frame:
-                        print(f"  [Viewer] *** First frame decoded! (+{time.time()-self._connect_start:.1f}s) ***")
+                        print(f"  [Viewer] *** First frame decoded! ***")
                         first_frame = False
 
                     frame = np.frombuffer(frame_data, dtype=np.uint8).reshape(
@@ -378,7 +385,7 @@ class GhostViewer:
             with self.frame_lock:
                 if self.new_frame and self.latest_surface:
                     if not hasattr(self, '_first_render_logged'):
-                        print(f"  [Viewer] *** First frame rendered! (+{time.time()-self._connect_start:.1f}s) ***")
+                        print(f"  [Viewer] *** First frame rendered! ***")
                         self._first_render_logged = True
                     scaled = pygame.transform.scale(self.latest_surface, (display_w, display_h))
                     screen.blit(scaled, (0, 0))
@@ -414,7 +421,7 @@ class GhostViewer:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
                 if first_udp:
-                    print(f"  [Viewer] First UDP packet from {addr} (+{time.time()-self._connect_start:.1f}s)")
+                    print(f"  [Viewer] First UDP packet from {addr}")
                     first_udp = False
                 if len(data) < HEADER_SIZE:
                     continue
@@ -424,10 +431,10 @@ class GhostViewer:
 
                 if pkt_type == PKT_VIDEO:
                     if first_video:
-                        print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B) (+{time.time()-self._connect_start:.1f}s)")
+                        print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B)")
                         first_video = False
                     if first_keyframe and (flags & FLAG_KEYFRAME):
-                        print(f"  [Viewer] First KEYFRAME received! (+{time.time()-self._connect_start:.1f}s)")
+                        print(f"  [Viewer] First KEYFRAME received!")
                         first_keyframe = False
                     self._handle_video(flags, payload)
                 self.bytes_received += len(data)
