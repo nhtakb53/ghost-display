@@ -15,6 +15,7 @@ from capture import ScreenCapture
 from encoder import H264Encoder
 from network import StreamServer
 from input_handler import InputHandler
+from virtual_display import VirtualDisplayManager
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.upnp import setup_upnp, cleanup_upnp
@@ -34,6 +35,7 @@ class GhostHost:
             control_port=args.control_port,
         )
         self.input_handler = InputHandler()
+        self.vdisplay = VirtualDisplayManager()
         self.running = False
         self.scale = 1.0
         self.enc_w = 0
@@ -57,7 +59,11 @@ class GhostHost:
         else:
             print(f"  [Host] UPnP: 자동 포트포워딩 실패 - 수동 설정 필요할 수 있음")
 
-        # 1. 커널 드라이버 연결
+        # 1. 가상 디스플레이 (모니터 없으면 자동 생성)
+        if not self.args.no_virtual_display:
+            self.vdisplay.ensure_display(width=1920, height=1080, refresh=self.args.fps)
+
+        # 2. 커널 드라이버 연결
         if not self.input_handler.connect():
             print("  [Host] WARNING: Kernel input not available, input disabled")
 
@@ -193,6 +199,7 @@ class GhostHost:
         self.capture.stop()
         self.network.stop()
         self.input_handler.close()
+        self.vdisplay.close()
         cleanup_upnp()
         print("  [Host] Done.")
 
@@ -206,6 +213,7 @@ def main():
     parser.add_argument("--control-port", type=int, default=9001, help="TCP control port (default: 9001)")
     parser.add_argument("--software", action="store_true", help="Use software encoder (no NVENC)")
     parser.add_argument("--scale", type=float, default=0, help="Scale factor (e.g. 0.5 for half res). 0=auto")
+    parser.add_argument("--no-virtual-display", action="store_true", help="Disable auto virtual display")
     args = parser.parse_args()
 
     host = GhostHost(args)
