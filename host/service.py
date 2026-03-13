@@ -29,7 +29,6 @@ import win32ts
 import win32process
 import win32con
 import win32api
-import win32security
 import servicemanager
 
 # 서비스에서 실행 시 작업 디렉토리를 스크립트 위치로 설정
@@ -153,36 +152,18 @@ def get_active_session_id():
 
 
 def launch_in_session(session_id, cmd, log_file):
-    """사용자 세션에서 SYSTEM 권한으로 프로세스 실행
+    """사용자 세션에서 프로세스 실행 (Sunshine/Parsec 방식)
 
-    SYSTEM 토큰을 복제하고 세션 ID만 변경 → SYSTEM 권한 + 사용자 데스크톱 접근
+    WTSQueryUserToken으로 사용자 토큰 획득 → CreateProcessAsUser
     """
-    # 현재 프로세스(서비스)의 SYSTEM 토큰 가져오기
-    current_token = win32security.OpenProcessToken(
-        win32api.GetCurrentProcess(),
-        win32con.TOKEN_ALL_ACCESS
-    )
-
-    # 토큰 복제 (Primary token으로)
-    new_token = win32security.DuplicateTokenEx(
-        current_token,
-        win32security.SecurityImpersonation,
-        win32con.TOKEN_ALL_ACCESS,
-        win32security.TokenPrimary,
-    )
-
-    # 복제된 토큰의 세션 ID를 사용자 세션으로 변경
-    win32security.SetTokenInformation(
-        new_token,
-        win32security.TokenSessionId,
-        session_id
-    )
+    # 사용자 토큰 가져오기
+    token = win32ts.WTSQueryUserToken(session_id)
 
     # 환경 변수 블록 생성
     env = None
     try:
         import win32profile
-        env = win32profile.CreateEnvironmentBlock(new_token, False)
+        env = win32profile.CreateEnvironmentBlock(token, False)
     except:
         env = None
 
@@ -192,9 +173,9 @@ def launch_in_session(session_id, cmd, log_file):
     si.wShowWindow = win32con.SW_HIDE
     si.lpDesktop = "winsta0\\default"
 
-    # SYSTEM 토큰으로 사용자 세션에서 실행
+    # 사용자 세션에서 실행
     proc_info = win32process.CreateProcessAsUser(
-        new_token,          # SYSTEM 토큰 (세션만 변경)
+        token,              # 사용자 토큰
         None,               # lpApplicationName
         cmd,                # lpCommandLine
         None,               # lpProcessAttributes
