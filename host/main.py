@@ -12,7 +12,7 @@ import threading
 
 import cv2
 import numpy as np
-from capture import ScreenCapture
+from capture import ScreenCapture as WGCCapture
 from encoder import H264Encoder
 from network import StreamServer
 from input_handler import InputHandler
@@ -25,10 +25,18 @@ from common.upnp import setup_upnp, cleanup_upnp
 class GhostHost:
     def __init__(self, args):
         self.args = args
-        self.capture = ScreenCapture(
-            monitor_index=args.monitor,
-            target_fps=args.fps,
-        )
+        capture_mode = getattr(args, 'capture_mode', 'wgc')
+        if capture_mode == 'dxgi':
+            from capture_dxgi import DXGICapture
+            self.capture = DXGICapture(
+                monitor_index=args.monitor,
+                target_fps=args.fps,
+            )
+        else:
+            self.capture = WGCCapture(
+                monitor_index=args.monitor,
+                target_fps=args.fps,
+            )
         self.encoder = None
         self.network = StreamServer(
             host="0.0.0.0",
@@ -261,6 +269,8 @@ def main():
     parser.add_argument("--scale", type=float, default=0, help="Scale factor (e.g. 0.5 for half res). 0=auto")
     parser.add_argument("--no-virtual-display", action="store_true", help="Disable auto virtual display")
     parser.add_argument("--sendinput", action="store_true", help="Force SendInput mode (skip kernel driver)")
+    parser.add_argument("--capture-mode", type=str, default="wgc", choices=["wgc", "dxgi"],
+                        help="Capture mode: wgc (default) or dxgi (supports lock screen with SYSTEM privilege)")
     args = parser.parse_args()
 
     host = GhostHost(args)
