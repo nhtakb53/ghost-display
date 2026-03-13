@@ -1,6 +1,7 @@
 """
 Ghost Display - Viewer
 pygame 기반: H.264 디코딩 + 화면 표시 + 마우스/키보드 캡처
+--test 모드: pygame 없이 CLI에서 패킷 흐름 모니터링
 """
 
 import socket
@@ -14,7 +15,10 @@ import os
 import argparse
 import numpy as np
 
-import pygame
+# --test 모드에서는 pygame 불필요
+_test_mode = "--test" in sys.argv
+if not _test_mode:
+    import pygame
 
 # 모든 print에 타임스탬프 자동 추가
 import builtins
@@ -56,51 +60,63 @@ def find_ffmpeg():
     return "ffmpeg"
 
 
-# pygame scancode → keyboard scan code 매핑
-# pygame은 SDL scancode 사용, Host는 HID/PS2 scan code 필요
-SDL_TO_SCAN = {
-    pygame.K_ESCAPE: 0x01, pygame.K_1: 0x02, pygame.K_2: 0x03, pygame.K_3: 0x04,
-    pygame.K_4: 0x05, pygame.K_5: 0x06, pygame.K_6: 0x07, pygame.K_7: 0x08,
-    pygame.K_8: 0x09, pygame.K_9: 0x0A, pygame.K_0: 0x0B,
-    pygame.K_MINUS: 0x0C, pygame.K_EQUALS: 0x0D, pygame.K_BACKSPACE: 0x0E,
-    pygame.K_TAB: 0x0F,
-    pygame.K_q: 0x10, pygame.K_w: 0x11, pygame.K_e: 0x12, pygame.K_r: 0x13,
-    pygame.K_t: 0x14, pygame.K_y: 0x15, pygame.K_u: 0x16, pygame.K_i: 0x17,
-    pygame.K_o: 0x18, pygame.K_p: 0x19,
-    pygame.K_LEFTBRACKET: 0x1A, pygame.K_RIGHTBRACKET: 0x1B,
-    pygame.K_RETURN: 0x1C,
-    pygame.K_a: 0x1E, pygame.K_s: 0x1F, pygame.K_d: 0x20, pygame.K_f: 0x21,
-    pygame.K_g: 0x22, pygame.K_h: 0x23, pygame.K_j: 0x24, pygame.K_k: 0x25,
-    pygame.K_l: 0x26,
-    pygame.K_SEMICOLON: 0x27, pygame.K_QUOTE: 0x28, pygame.K_BACKQUOTE: 0x29,
-    pygame.K_LSHIFT: 0x2A, pygame.K_BACKSLASH: 0x2B,
-    pygame.K_z: 0x2C, pygame.K_x: 0x2D, pygame.K_c: 0x2E, pygame.K_v: 0x2F,
-    pygame.K_b: 0x30, pygame.K_n: 0x31, pygame.K_m: 0x32,
-    pygame.K_COMMA: 0x33, pygame.K_PERIOD: 0x34, pygame.K_SLASH: 0x35,
-    pygame.K_RSHIFT: 0x36, pygame.K_LALT: 0x38,
-    pygame.K_SPACE: 0x39, pygame.K_CAPSLOCK: 0x3A,
-    pygame.K_F1: 0x3B, pygame.K_F2: 0x3C, pygame.K_F3: 0x3D, pygame.K_F4: 0x3E,
-    pygame.K_F5: 0x3F, pygame.K_F6: 0x40, pygame.K_F7: 0x41, pygame.K_F8: 0x42,
-    pygame.K_F9: 0x43, pygame.K_F10: 0x44, pygame.K_F11: 0x57, pygame.K_F12: 0x58,
-    pygame.K_LCTRL: 0x1D,
-}
+# pygame scancode → keyboard scan code 매핑 (테스트 모드에서는 불필요)
+SDL_TO_SCAN = {}
+SDL_TO_SCAN_E0 = {}
 
-# E0 확장 키 (scan code + E0 prefix)
-SDL_TO_SCAN_E0 = {
-    pygame.K_RCTRL: 0x1D, pygame.K_RALT: 0x38,
-    pygame.K_UP: 0x48, pygame.K_DOWN: 0x50,
-    pygame.K_LEFT: 0x4B, pygame.K_RIGHT: 0x4D,
-    pygame.K_HOME: 0x47, pygame.K_END: 0x4F,
-    pygame.K_PAGEUP: 0x49, pygame.K_PAGEDOWN: 0x51,
-    pygame.K_INSERT: 0x52, pygame.K_DELETE: 0x53,
+def _init_keymaps():
+    global SDL_TO_SCAN, SDL_TO_SCAN_E0
+    if _test_mode:
+        return
+    SDL_TO_SCAN = {
+        pygame.K_ESCAPE: 0x01, pygame.K_1: 0x02, pygame.K_2: 0x03, pygame.K_3: 0x04,
+        pygame.K_4: 0x05, pygame.K_5: 0x06, pygame.K_6: 0x07, pygame.K_7: 0x08,
+        pygame.K_8: 0x09, pygame.K_9: 0x0A, pygame.K_0: 0x0B,
+        pygame.K_MINUS: 0x0C, pygame.K_EQUALS: 0x0D, pygame.K_BACKSPACE: 0x0E,
+        pygame.K_TAB: 0x0F,
+        pygame.K_q: 0x10, pygame.K_w: 0x11, pygame.K_e: 0x12, pygame.K_r: 0x13,
+        pygame.K_t: 0x14, pygame.K_y: 0x15, pygame.K_u: 0x16, pygame.K_i: 0x17,
+        pygame.K_o: 0x18, pygame.K_p: 0x19,
+        pygame.K_LEFTBRACKET: 0x1A, pygame.K_RIGHTBRACKET: 0x1B,
+        pygame.K_RETURN: 0x1C,
+        pygame.K_a: 0x1E, pygame.K_s: 0x1F, pygame.K_d: 0x20, pygame.K_f: 0x21,
+        pygame.K_g: 0x22, pygame.K_h: 0x23, pygame.K_j: 0x24, pygame.K_k: 0x25,
+        pygame.K_l: 0x26,
+        pygame.K_SEMICOLON: 0x27, pygame.K_QUOTE: 0x28, pygame.K_BACKQUOTE: 0x29,
+        pygame.K_LSHIFT: 0x2A, pygame.K_BACKSLASH: 0x2B,
+        pygame.K_z: 0x2C, pygame.K_x: 0x2D, pygame.K_c: 0x2E, pygame.K_v: 0x2F,
+        pygame.K_b: 0x30, pygame.K_n: 0x31, pygame.K_m: 0x32,
+        pygame.K_COMMA: 0x33, pygame.K_PERIOD: 0x34, pygame.K_SLASH: 0x35,
+        pygame.K_RSHIFT: 0x36, pygame.K_LALT: 0x38,
+        pygame.K_SPACE: 0x39, pygame.K_CAPSLOCK: 0x3A,
+        pygame.K_F1: 0x3B, pygame.K_F2: 0x3C, pygame.K_F3: 0x3D, pygame.K_F4: 0x3E,
+        pygame.K_F5: 0x3F, pygame.K_F6: 0x40, pygame.K_F7: 0x41, pygame.K_F8: 0x42,
+        pygame.K_F9: 0x43, pygame.K_F10: 0x44, pygame.K_F11: 0x57, pygame.K_F12: 0x58,
+        pygame.K_LCTRL: 0x1D,
+    }
+    SDL_TO_SCAN_E0 = {
+        pygame.K_RCTRL: 0x1D, pygame.K_RALT: 0x38,
+        pygame.K_UP: 0x48, pygame.K_DOWN: 0x50,
+        pygame.K_LEFT: 0x4B, pygame.K_RIGHT: 0x4D,
+        pygame.K_HOME: 0x47, pygame.K_END: 0x4F,
+        pygame.K_PAGEUP: 0x49, pygame.K_PAGEDOWN: 0x51,
+        pygame.K_INSERT: 0x52, pygame.K_DELETE: 0x53,
+    }
+
+
+# NAL type 이름 매핑
+NAL_TYPE_NAMES = {
+    1: "P-frame", 2: "SLICE_A", 3: "SLICE_B", 4: "SLICE_C",
+    5: "IDR", 6: "SEI", 7: "SPS", 8: "PPS", 9: "AUD",
 }
 
 
 class GhostViewer:
-    def __init__(self, host_ip, video_port=9000, control_port=9001):
+    def __init__(self, host_ip, video_port=9000, control_port=9001, test_mode=False):
         self.host_ip = host_ip
         self.video_port = video_port
         self.control_port = control_port
+        self.test_mode = test_mode
 
         self.tcp_sock = None
         self.udp_sock = None
@@ -141,8 +157,11 @@ class GhostViewer:
         self.input_active = False
 
     def start(self):
+        if not self.test_mode:
+            _init_keymaps()
+        mode_str = " (TEST MODE)" if self.test_mode else ""
         print("=" * 50)
-        print("  Ghost Display - Viewer")
+        print(f"  Ghost Display - Viewer{mode_str}")
         print("=" * 50)
 
         self.running = True
@@ -213,26 +232,44 @@ class GhostViewer:
             time.sleep(0.05)
         print(f"  [Viewer] SPS/PPS {'received' if self.got_sps_pps else 'TIMEOUT'}")
 
-        # 4. FFmpeg 디코더 시작 (H.264 → raw BGR)
-        self._start_decoder()
-        print(f"  [Viewer] Decoder ready")
+        if self.test_mode:
+            # 테스트 모드: 디코더 없이 패킷 모니터링만
+            print(f"  [Test] 디코더 생략 - 패킷 모니터링 모드")
+            if self.sps_pps_data:
+                self._dump_nal_info("TCP SPS/PPS", self.sps_pps_data)
 
-        # SPS/PPS 주입
-        if self.sps_pps_data:
-            self._feed_decoder(self.sps_pps_data)
-            print(f"  [Viewer] SPS/PPS injected ({len(self.sps_pps_data)} bytes)")
+            # UDP 수신 (테스트용 상세 로그)
+            threading.Thread(target=self._udp_recv_loop, daemon=True).start()
+            print(f"  [Test] UDP 수신 시작")
 
-        # 5. UDP 수신 스레드
-        threading.Thread(target=self._udp_recv_loop, daemon=True).start()
-        print(f"  [Viewer] UDP recv started")
+            # 상태 로그 (2초 간격)
+            self._stats_start = time.time()
+            self._last_stats_time = self._stats_start
+            threading.Thread(target=self._stats_loop, daemon=True).start()
 
-        # 6. 상태 로그 스레드
-        self._stats_start = time.time()
-        self._last_stats_time = self._stats_start
-        threading.Thread(target=self._stats_loop, daemon=True).start()
+            # 테스트 CLI 루프
+            self._test_cli_loop()
+        else:
+            # 4. FFmpeg 디코더 시작 (H.264 → raw BGR)
+            self._start_decoder()
+            print(f"  [Viewer] Decoder ready")
 
-        # 6. pygame 메인 루프 (표시 + 입력)
-        self._pygame_loop()
+            # SPS/PPS 주입
+            if self.sps_pps_data:
+                self._feed_decoder(self.sps_pps_data)
+                print(f"  [Viewer] SPS/PPS injected ({len(self.sps_pps_data)} bytes)")
+
+            # 5. UDP 수신 스레드
+            threading.Thread(target=self._udp_recv_loop, daemon=True).start()
+            print(f"  [Viewer] UDP recv started")
+
+            # 6. 상태 로그 스레드
+            self._stats_start = time.time()
+            self._last_stats_time = self._stats_start
+            threading.Thread(target=self._stats_loop, daemon=True).start()
+
+            # pygame 메인 루프 (표시 + 입력)
+            self._pygame_loop()
 
     def _start_decoder(self):
         """FFmpeg H.264 → raw BGR24 디코더"""
@@ -432,10 +469,57 @@ class GhostViewer:
                 "e0": False,
             })
 
+    def _dump_nal_info(self, label, data):
+        """NAL unit들을 파싱해서 상세 정보 출력"""
+        pos = 0
+        nal_idx = 0
+        while pos < len(data) - 4:
+            # start code 찾기
+            if data[pos:pos+4] == b'\x00\x00\x00\x01':
+                sc_len = 4
+            elif data[pos:pos+3] == b'\x00\x00\x01':
+                sc_len = 3
+            else:
+                pos += 1
+                continue
+
+            # 다음 start code 찾기
+            next_pos = len(data)
+            for j in range(pos + sc_len, len(data) - 3):
+                if data[j:j+4] == b'\x00\x00\x00\x01' or data[j:j+3] == b'\x00\x00\x01':
+                    next_pos = j
+                    break
+
+            nal_body = data[pos+sc_len:next_pos]
+            if nal_body:
+                nal_type = nal_body[0] & 0x1F
+                nal_name = NAL_TYPE_NAMES.get(nal_type, f"type_{nal_type}")
+                nal_size = next_pos - pos
+                print(f"  [{label}] NAL #{nal_idx}: {nal_name} (type={nal_type}, {nal_size}B)")
+            nal_idx += 1
+            pos = next_pos
+
+    def _test_cli_loop(self):
+        """테스트 모드 CLI - Ctrl+C로 종료"""
+        print()
+        print("  ╔══════════════════════════════════════════╗")
+        print("  ║  TEST MODE - 패킷 모니터링 중            ║")
+        print("  ║  Ctrl+C 로 종료                          ║")
+        print("  ║  2초마다 통계, 패킷별 상세 로그 출력      ║")
+        print("  ╚══════════════════════════════════════════╝")
+        print()
+        try:
+            while self.running:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n  [Test] 종료 중...")
+            self.running = False
+
     def _stats_loop(self):
-        """5초마다 상태 로그 출력"""
+        """상태 로그 출력 (테스트모드 2초, 일반 5초)"""
+        interval = 2 if self.test_mode else 5
         while self.running:
-            time.sleep(5)
+            time.sleep(interval)
             if not self.running:
                 break
 
@@ -464,9 +548,17 @@ class GhostViewer:
             else:
                 status = "disconnected"
 
-            print(f"  [Stats] recv:{mbps:.1f}Mbps {d_packets}pkts {d_nals}nals | "
-                  f"dec:{d_decoded/dt:.0f}fps render:{d_rendered/dt:.0f}fps | "
-                  f"keyframes:{self.keyframes_received} | {status}")
+            if self.test_mode:
+                total_elapsed = now - self._stats_start
+                total_mb = self.bytes_received / 1024 / 1024
+                print(f"  [Stats] ▼{mbps:.1f}Mbps {d_packets}pkts {d_nals}nals | "
+                      f"keyframes:{self.keyframes_received} | "
+                      f"총 {total_mb:.1f}MB {self.packets_received}pkts "
+                      f"{total_elapsed:.0f}s | {status}")
+            else:
+                print(f"  [Stats] recv:{mbps:.1f}Mbps {d_packets}pkts {d_nals}nals | "
+                      f"dec:{d_decoded/dt:.0f}fps render:{d_rendered/dt:.0f}fps | "
+                      f"keyframes:{self.keyframes_received} | {status}")
 
             # 스냅샷 갱신
             self._last_stats_time = now
@@ -482,6 +574,8 @@ class GhostViewer:
         first_udp = True
         first_video = True
         first_keyframe = True
+        PKT_NAMES = {PKT_VIDEO: "VIDEO", PKT_INPUT: "INPUT", PKT_CONTROL: "CTRL",
+                     PKT_PING: "PING", PKT_PONG: "PONG"}
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
@@ -489,12 +583,42 @@ class GhostViewer:
                     print(f"  [Viewer] First UDP packet from {addr}")
                     first_udp = False
                 if len(data) < HEADER_SIZE:
+                    if self.test_mode:
+                        print(f"  [UDP<] 짧은 패킷 {len(data)}B from {addr}")
                     continue
 
                 pkt_type, flags, seq, size = struct.unpack(HEADER_FMT, data[:HEADER_SIZE])
                 payload = data[HEADER_SIZE:]
 
                 self.packets_received += 1
+
+                if self.test_mode:
+                    pkt_name = PKT_NAMES.get(pkt_type, f"0x{pkt_type:02X}")
+                    flag_parts = []
+                    if flags & FLAG_KEYFRAME:
+                        flag_parts.append("KEY")
+                    if flags & FLAG_FRAGMENT:
+                        flag_parts.append("FRAG")
+                    if flags & FLAG_LAST_FRAGMENT:
+                        flag_parts.append("LAST")
+                    flag_str = "|".join(flag_parts) if flag_parts else "-"
+
+                    if pkt_type == PKT_VIDEO:
+                        # NAL 타입 식별
+                        nal_info = ""
+                        if payload:
+                            if payload[:4] == b'\x00\x00\x00\x01' and len(payload) > 4:
+                                nt = payload[4] & 0x1F
+                            elif payload[:3] == b'\x00\x00\x01' and len(payload) > 3:
+                                nt = payload[3] & 0x1F
+                            else:
+                                nt = payload[0] & 0x1F if payload else -1
+                            nal_name = NAL_TYPE_NAMES.get(nt, f"type_{nt}")
+                            nal_info = f" NAL={nal_name}"
+                        print(f"  [UDP<] {pkt_name} seq={seq} flags=[{flag_str}] "
+                              f"{len(payload)}B{nal_info}")
+                    else:
+                        print(f"  [UDP<] {pkt_name} seq={seq} {len(payload)}B")
 
                 if pkt_type == PKT_VIDEO:
                     if first_video:
@@ -553,6 +677,8 @@ class GhostViewer:
             try:
                 data = self.tcp_sock.recv(4096)
                 if not data:
+                    if self.test_mode:
+                        print(f"  [TCP<] 연결 끊김")
                     break
                 buf += data
                 while len(buf) >= HEADER_SIZE:
@@ -565,12 +691,18 @@ class GhostViewer:
                     if pkt_type == PKT_VIDEO:
                         self.sps_pps_data += payload
                         self.got_sps_pps = True
+                        if self.test_mode:
+                            self._dump_nal_info("TCP<VIDEO", payload)
                     elif pkt_type == PKT_CONTROL:
                         try:
                             ctrl = json.loads(payload.decode("utf-8"))
+                            if self.test_mode:
+                                print(f"  [TCP<CTRL] {json.dumps(ctrl, ensure_ascii=False)}")
                             self._handle_control(ctrl)
                         except:
                             pass
+                    elif self.test_mode:
+                        print(f"  [TCP<] type=0x{pkt_type:02X} flags={flags:#x} {len(payload)}B")
             except socket.timeout:
                 continue
             except:
@@ -638,9 +770,12 @@ def main():
     parser.add_argument("host", help="Host IP address")
     parser.add_argument("--video-port", type=int, default=9000)
     parser.add_argument("--control-port", type=int, default=9001)
+    parser.add_argument("--test", action="store_true",
+                        help="테스트 모드: pygame 없이 CLI에서 패킷 모니터링")
     args = parser.parse_args()
 
-    viewer = GhostViewer(args.host, args.video_port, args.control_port)
+    viewer = GhostViewer(args.host, args.video_port, args.control_port,
+                         test_mode=args.test)
     try:
         viewer.start()
     except KeyboardInterrupt:
