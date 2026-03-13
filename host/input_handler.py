@@ -634,6 +634,27 @@ class InputHandler:
         user32 = ctypes.WinDLL('user32', use_last_error=True)
         user32.SendInput(1, ctypes.byref(inp), 40)
 
+    def switch_mode(self, mode):
+        """입력 모드 런타임 전환: 'kse' 또는 'sendinput'"""
+        if mode == "sendinput":
+            self.use_sendinput = True
+            _switch_to_active_desktop()
+            print(f"  [Input] 모드 전환: SendInput")
+        elif mode == "kse":
+            if self.handle:
+                self.use_sendinput = False
+                print(f"  [Input] 모드 전환: KSE driver")
+            else:
+                # 핸들 없으면 재연결 시도
+                if self._connect_kse():
+                    self.use_sendinput = False
+                    print(f"  [Input] 모드 전환: KSE driver (재연결)")
+                else:
+                    print(f"  [Input] KSE 연결 실패, SendInput 유지")
+
+    def get_mode(self):
+        return "sendinput" if self.use_sendinput else "kse"
+
     def update_resolution(self, width, height):
         self.screen_width = width
         self.screen_height = height

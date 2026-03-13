@@ -80,6 +80,7 @@ class GhostHost:
         # 2. 네트워크 시작 (viewer 연결 대기)
         self.network.on_input = self.input_handler.handle_event
         self.network.on_connected = self._on_viewer_connected
+        self.network.on_control = self._on_control
         self.network.start()
 
         # 3. 캡처 시작 (인코더 재시작 불필요 — SPS/PPS 캐시 유지)
@@ -230,6 +231,15 @@ class GhostHost:
                 print(f"  [Host] New SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
                 self._need_resend_sps = False
         self.network.send_video_nal(nal_data, nal_type, is_keyframe)
+
+    def _on_control(self, ctrl):
+        """뷰어에서 보낸 제어 명령 처리"""
+        cmd = ctrl.get("cmd")
+        if cmd == "switch_input_mode":
+            mode = ctrl.get("mode")
+            if mode in ("kse", "sendinput"):
+                self.input_handler.switch_mode(mode)
+                self.network.send_control({"cmd": "input_mode_changed", "mode": self.input_handler.get_mode()})
 
     def _on_viewer_connected(self, addr):
         """Viewer 연결 시 SPS/PPS + 스트림 정보 즉시 전송"""

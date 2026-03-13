@@ -57,6 +57,7 @@ class StreamServer:
         # 콜백
         self.on_input = None       # 입력 이벤트 콜백
         self.on_connected = None   # viewer 연결 콜백
+        self.on_control = None     # 제어 명령 콜백
 
         # 통계
         self.bytes_sent = 0
@@ -161,6 +162,8 @@ class StreamServer:
                         try:
                             ctrl = json.loads(payload.decode("utf-8"))
                             self._handle_control(ctrl)
+                            if self.on_control:
+                                self.on_control(ctrl)
                         except:
                             pass
 

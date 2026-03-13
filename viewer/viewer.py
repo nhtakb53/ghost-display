@@ -155,6 +155,8 @@ class GhostViewer:
 
         # 입력 활성화 (F12로 토글)
         self.input_active = False
+        # 입력 모드 (F11로 전환)
+        self.input_mode = "kse"
 
     def start(self):
         if not self.test_mode:
@@ -392,13 +394,19 @@ class GhostViewer:
                     if event.key == pygame.K_F12:
                         self.input_active = not self.input_active
                         state = "ON" if self.input_active else "OFF"
-                        pygame.display.set_caption(f"Ghost Display [F12: Input {state}]")
+                        self._update_title()
                         if self.input_active:
                             pygame.event.set_grab(True)
                             pygame.mouse.set_visible(False)
                         else:
                             pygame.event.set_grab(False)
                             pygame.mouse.set_visible(True)
+                    elif event.key == pygame.K_F11:
+                        new_mode = "sendinput" if self.input_mode == "kse" else "kse"
+                        self._send_control({"cmd": "switch_input_mode", "mode": new_mode})
+                        self.input_mode = new_mode
+                        self._update_title()
+                        print(f"  [Viewer] 입력 모드 전환 요청: {new_mode}")
                     elif self.input_active:
                         self._send_key(event.key, down=True)
 
@@ -453,6 +461,11 @@ class GhostViewer:
             clock.tick(60)
 
         pygame.quit()
+
+    def _update_title(self):
+        state = "ON" if self.input_active else "OFF"
+        mode = self.input_mode.upper()
+        pygame.display.set_caption(f"Ghost Display [F12:Input {state}] [F11:{mode}]")
 
     def _send_key(self, key, down):
         """pygame 키 → scan code 변환 후 전송"""
@@ -754,6 +767,11 @@ class GhostViewer:
             self.stream_height = ctrl.get("height", 1080)
             print(f"  [Viewer] Stream: {self.stream_width}x{self.stream_height} "
                   f"@ {ctrl.get('fps')}fps")
+        elif cmd == "input_mode_changed":
+            self.input_mode = ctrl.get("mode", self.input_mode)
+            print(f"  [Viewer] 호스트 입력 모드: {self.input_mode}")
+            if not _test_mode:
+                self._update_title()
         elif cmd == "host_udp_addr":
             ip = ctrl.get("ip")
             port = ctrl.get("port")
