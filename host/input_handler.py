@@ -361,6 +361,9 @@ class InputHandler:
                 version = req.u.handshake.version
                 print(f"  [Input] KSE driver connected (v{version >> 8}.{version & 0xFF})")
                 self.connected = True
+                # 입력 테스트: 마우스를 화면 중앙으로 이동
+                self._mouse_move(self.screen_width // 2, self.screen_height // 2)
+                print(f"  [Input] Test: mouse move to center ({self.screen_width // 2}, {self.screen_height // 2})")
                 return True
             else:
                 print(f"  [Input] Handshake failed: bad response magic")
@@ -386,6 +389,8 @@ class InputHandler:
         if not result:
             err = ctypes.get_last_error()
             print(f"  [Input] IOCTL failed: error {err}, cmd={req.cmd} sub={req.sub} status=0x{req.status:08X}")
+        elif req.status != 0:
+            print(f"  [Input] IOCTL ok but status=0x{req.status:08X}, cmd={req.cmd} sub={req.sub}")
         return bool(result)
 
     def handle_event(self, event):
