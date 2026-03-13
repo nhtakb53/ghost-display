@@ -40,7 +40,14 @@ sys.path.insert(0, os.path.join(SCRIPT_DIR, ".."))
 
 # 설정 파일 경로
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "service_config.json")
-LOG_FILE = os.path.join(SCRIPT_DIR, "ghost-host.log")
+# 로그 파일: SYSTEM 권한에서도 쓸 수 있는 ProgramData 또는 스크립트 폴더
+_programdata_log = os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "GhostDisplay")
+if not os.path.exists(_programdata_log):
+    try:
+        os.makedirs(_programdata_log, exist_ok=True)
+    except:
+        _programdata_log = SCRIPT_DIR
+LOG_FILE = os.path.join(_programdata_log, "ghost-host.log")
 
 DEFAULT_CONFIG = {
     "monitor": 0,
