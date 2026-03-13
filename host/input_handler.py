@@ -7,6 +7,10 @@ NCGuard 등 안티치트가 탐지 불가
 import ctypes
 import ctypes.wintypes
 import struct
+import subprocess
+import sys
+import time
+import os
 import winreg
 
 # IOCTL
@@ -58,6 +62,189 @@ GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 OPEN_EXISTING = 3
 INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
+
+# 번들된 드라이버 경로
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+KERNEL_DIR = os.path.join(_PROJECT_ROOT, "drivers", "kernel")
+KDU_EXE = os.path.join(KERNEL_DIR, "kdu.exe")
+DRIVER_SYS = os.path.join(KERNEL_DIR, "wcnfs.sys")
+SERVICE_NAME = "wcnfs"
+
+
+def is_driver_loaded():
+    """wcnfs 서비스가 실행 중인지 확인"""
+    try:
+        result = subprocess.run(
+            ["sc", "query", SERVICE_NAME],
+            capture_output=True, text=True, timeout=5
+        )
+        return "RUNNING" in result.stdout
+    except Exception:
+        return False
+
+
+def _is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def load_driver():
+    """KDU를 이용해 커널 드라이버 로드 (DSE 우회)"""
+    if is_driver_loaded():
+        print("  [Input] Driver already loaded")
+        return True
+
+    if not os.path.exists(DRIVER_SYS):
+        print(f"  [Input] Driver not found: {DRIVER_SYS}")
+        return False
+    if not os.path.exists(KDU_EXE):
+        print(f"  [Input] KDU not found: {KDU_EXE}")
+        return False
+
+    if not _is_admin():
+        print("  [Input] Admin privileges required for driver loading")
+        print("  [Input] Requesting elevation...")
+
+        # 관리자 권한으로 로드 스크립트 실행
+        load_script = os.path.join(KERNEL_DIR, "_load.py")
+        host_dir = os.path.dirname(os.path.abspath(__file__))
+
+        with open(load_script, "w") as f:
+            f.write(f'''import sys, os
+sys.path.insert(0, r"{host_dir}")
+from input_handler import _do_load_driver
+success = _do_load_driver()
+input("Press Enter to close..." if not success else "")
+sys.exit(0 if success else 1)
+''')
+
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, f'"{load_script}"', None, 1)
+        if ret > 32:
+            print("  [Input] Waiting for driver load...")
+            for _ in range(30):
+                time.sleep(1)
+                if is_driver_loaded():
+                    print("  [Input] Driver loaded successfully!")
+                    return True
+                # 레지스트리에 디바이스 경로가 등록되었는지도 확인
+                if get_device_path():
+                    print("  [Input] Driver loaded successfully!")
+                    return True
+            print("  [Input] Driver load timed out")
+        else:
+            print("  [Input] UAC denied or elevation failed")
+        return False
+
+    return _do_load_driver()
+
+
+def _do_load_driver():
+    """실제 드라이버 로드 수행 (관리자 권한 필요)"""
+    print("  [Input] === Kernel Driver Loader ===")
+
+    # 기존 서비스 정리
+    print("  [Input] Cleaning up existing service...")
+    subprocess.run(["sc", "stop", SERVICE_NAME],
+                   capture_output=True, timeout=10)
+    time.sleep(1)
+    subprocess.run(["sc", "delete", SERVICE_NAME],
+                   capture_output=True, timeout=10)
+    time.sleep(1)
+
+    # ThrottleStop 충돌 방지
+    ts_result = subprocess.run(
+        ["tasklist", "/fi", "imagename eq ThrottleStop.exe"],
+        capture_output=True, text=True, timeout=5
+    )
+    restart_ts = "ThrottleStop" in ts_result.stdout
+    if restart_ts:
+        print("  [Input] Stopping ThrottleStop...")
+        subprocess.run(["taskkill", "/f", "/im", "ThrottleStop.exe"],
+                       capture_output=True, timeout=5)
+        time.sleep(2)
+
+    # DSE 비활성화 (KDU provider 55)
+    print("  [Input] Disabling DSE...")
+    result = subprocess.run(
+        [KDU_EXE, "-prv", "55", "-dse", "0"],
+        capture_output=True, text=True, timeout=30,
+        cwd=KERNEL_DIR
+    )
+
+    if "Abort" in result.stdout or "Write result verification succeeded" not in result.stdout:
+        print(f"  [Input] DSE disable failed: {result.stdout.strip()}")
+        _restart_throttlestop(restart_ts)
+        return False
+    print("  [Input] DSE disabled")
+
+    # 서비스 생성 및 시작
+    print("  [Input] Creating and starting driver service...")
+    driver_path = os.path.abspath(DRIVER_SYS)
+
+    result = subprocess.run(
+        ["sc", "create", SERVICE_NAME, "type=", "kernel",
+         f"binPath=", driver_path],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0:
+        print(f"  [Input] sc create failed: {result.stderr.strip()}")
+        _restore_dse(restart_ts)
+        return False
+
+    result = subprocess.run(
+        ["sc", "start", SERVICE_NAME],
+        capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0:
+        print(f"  [Input] sc start failed: {result.stderr.strip()}")
+        subprocess.run(["sc", "delete", SERVICE_NAME], capture_output=True)
+        _restore_dse(restart_ts)
+        return False
+
+    print("  [Input] Driver started")
+
+    # DSE 복원
+    _restore_dse(restart_ts)
+
+    # 확인
+    time.sleep(1)
+    if get_device_path():
+        print("  [Input] Driver loaded and device registered!")
+        return True
+
+    print("  [Input] Driver may have loaded but device path not found yet")
+    return True
+
+
+def _restore_dse(restart_ts):
+    """DSE 복원 + ThrottleStop 재시작"""
+    print("  [Input] Restoring DSE...")
+    result = subprocess.run(
+        [KDU_EXE, "-prv", "55", "-dse", "6"],
+        capture_output=True, text=True, timeout=30,
+        cwd=KERNEL_DIR
+    )
+    if "Write result verification succeeded" in result.stdout:
+        print("  [Input] DSE restored")
+    else:
+        print("  [Input] WARNING: DSE restore failed! Reboot recommended")
+
+    _restart_throttlestop(restart_ts)
+
+
+def _restart_throttlestop(restart):
+    """ThrottleStop 재시작"""
+    if not restart:
+        return
+    print("  [Input] Restarting ThrottleStop...")
+    for path in [r"C:\Program Files\ThrottleStop\ThrottleStop.exe",
+                 os.path.expandvars(r"%LOCALAPPDATA%\ThrottleStop\ThrottleStop.exe")]:
+        if os.path.exists(path):
+            subprocess.Popen([path], creationflags=0x00000008)  # DETACHED_PROCESS
+            break
 
 
 class _KSE_Handshake(ctypes.Structure):
@@ -137,12 +324,17 @@ class InputHandler:
         self.connected = False
 
     def connect(self):
-        """커널 드라이버에 연결"""
+        """커널 드라이버에 연결 (미로드 시 자동 로드)"""
         device_path = get_device_path()
         if not device_path:
-            print("  [Input] WARNING: KSE driver not found in registry")
-            print("  [Input] Run load_driver.bat first")
-            return False
+            print("  [Input] Driver not found in registry, attempting auto-load...")
+            if load_driver():
+                # 로드 후 다시 경로 확인
+                time.sleep(1)
+                device_path = get_device_path()
+            if not device_path:
+                print("  [Input] WARNING: Driver not available")
+                return False
 
         print(f"  [Input] Device: {device_path}")
 

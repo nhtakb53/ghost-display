@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 .idea/
 drivers/_install.py
+drivers/kernel/_load.py
