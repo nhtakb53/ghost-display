@@ -135,6 +135,7 @@ class GhostViewer:
             print(f"  [Viewer] UPnP: 자동 포트포워딩 실패 - 수동 설정 필요할 수 있음")
 
         # 1. TCP 연결
+        t0 = time.time()
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tcp_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
@@ -142,7 +143,7 @@ class GhostViewer:
         except ConnectionRefusedError:
             print(f"  [!] Cannot connect to {self.host_ip}:{self.control_port}")
             return
-        print(f"  [Viewer] TCP connected to {self.host_ip}")
+        print(f"  [Viewer] TCP connected to {self.host_ip} (+{time.time()-t0:.1f}s)")
 
         self._send_control({"cmd": "set_udp_port", "port": self.video_port})
 
@@ -156,11 +157,10 @@ class GhostViewer:
         stun_result = stun_get_mapped_address(self.udp_sock)
         if stun_result:
             pub_ip, pub_port = stun_result
-            print(f"  [Viewer] STUN: 공인 주소 {pub_ip}:{pub_port}")
-            # Host에게 실제 공인 UDP 주소 알려주기
+            print(f"  [Viewer] STUN: 공인 주소 {pub_ip}:{pub_port} (+{time.time()-t0:.1f}s)")
             self._send_control({"cmd": "set_udp_addr", "ip": pub_ip, "port": pub_port})
         else:
-            print(f"  [Viewer] STUN: 공인 주소 확인 실패")
+            print(f"  [Viewer] STUN: 공인 주소 확인 실패 (+{time.time()-t0:.1f}s)")
 
         # 2-2. Host의 STUN 주소 수신 대기용
         self.host_udp_addr = None
@@ -169,7 +169,7 @@ class GhostViewer:
         punch = struct.pack(HEADER_FMT, PKT_PING, 0, 0, 0)
         for _ in range(10):
             self.udp_sock.sendto(punch, (self.host_ip, self.video_port))
-        print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port}")
+        print(f"  [Viewer] UDP hole-punch sent to {self.host_ip}:{self.video_port} (+{time.time()-t0:.1f}s)")
 
         # 주기적 NAT keep-alive + 홀펀칭 (매핑 만료 방지)
         def _udp_keepalive():
@@ -187,14 +187,16 @@ class GhostViewer:
         threading.Thread(target=self._tcp_recv_loop, daemon=True).start()
 
         # SPS/PPS 대기 (최대 1초)
-        print("  [Viewer] Waiting for SPS/PPS...")
+        print(f"  [Viewer] Waiting for SPS/PPS... (+{time.time()-t0:.1f}s)")
         for _ in range(20):
             if self.got_sps_pps:
                 break
             time.sleep(0.05)
+        print(f"  [Viewer] SPS/PPS {'received' if self.got_sps_pps else 'TIMEOUT'} (+{time.time()-t0:.1f}s)")
 
         # 4. FFmpeg 디코더 시작 (H.264 → raw BGR)
         self._start_decoder()
+        print(f"  [Viewer] Decoder ready (+{time.time()-t0:.1f}s)")
 
         # SPS/PPS 주입
         if self.sps_pps_data:
@@ -203,6 +205,7 @@ class GhostViewer:
 
         # 5. UDP 수신 스레드
         threading.Thread(target=self._udp_recv_loop, daemon=True).start()
+        print(f"  [Viewer] UDP recv started (+{time.time()-t0:.1f}s)")
 
         # 6. pygame 메인 루프 (표시 + 입력)
         self._pygame_loop()
@@ -246,6 +249,7 @@ class GhostViewer:
         """FFmpeg stdout에서 raw 프레임 읽기 → pygame Surface 변환"""
         frame_size = self.stream_width * self.stream_height * 3  # BGR24
         buf = bytearray()
+        first_frame = True
 
         while self.running and self.decoder:
             try:
@@ -258,6 +262,10 @@ class GhostViewer:
                 while len(buf) >= frame_size:
                     frame_data = bytes(buf[:frame_size])
                     del buf[:frame_size]
+
+                    if first_frame:
+                        print(f"  [Viewer] *** First frame decoded! ***")
+                        first_frame = False
 
                     frame = np.frombuffer(frame_data, dtype=np.uint8).reshape(
                         self.stream_height, self.stream_width, 3)
@@ -395,9 +403,14 @@ class GhostViewer:
     # --- 네트워크 ---
 
     def _udp_recv_loop(self):
+        first_udp = True
+        first_video = True
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
+                if first_udp:
+                    print(f"  [Viewer] First UDP packet from {addr}")
+                    first_udp = False
                 if len(data) < HEADER_SIZE:
                     continue
 
@@ -405,6 +418,9 @@ class GhostViewer:
                 payload = data[HEADER_SIZE:]
 
                 if pkt_type == PKT_VIDEO:
+                    if first_video:
+                        print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B)")
+                        first_video = False
                     self._handle_video(flags, payload)
                 self.bytes_received += len(data)
 
