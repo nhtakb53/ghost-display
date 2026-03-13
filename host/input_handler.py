@@ -383,6 +383,9 @@ class InputHandler:
             ctypes.byref(bytes_returned),
             None
         )
+        if not result:
+            err = ctypes.get_last_error()
+            print(f"  [Input] IOCTL failed: error {err}, cmd={req.cmd} sub={req.sub} status=0x{req.status:08X}")
         return bool(result)
 
     def handle_event(self, event):
