@@ -85,20 +85,23 @@ class GhostHost:
         self.capture.on_reconnect = self._on_capture_reconnect
         self.capture.start()
 
-        # 첫 프레임 대기 (해상도 확인)
+        # 첫 프레임 대기 (해상도 확인, 최대 30초)
         print("\n  [Host] Waiting for first frame...")
         frame = None
-        for _ in range(50):
+        for i in range(300):
             frame = self.capture.get_frame(timeout=0.1)
             if frame is not None:
                 break
+            if i > 0 and i % 50 == 0:
+                print(f"  [Host] Still waiting for first frame... ({i//10}s)")
 
-        if frame is None:
-            print("  [Host] ERROR: No frames captured!")
-            return
-
-        cap_h, cap_w = frame.shape[:2]
-        print(f"  [Host] Capture: {cap_w}x{cap_h}")
+        if frame is not None:
+            cap_h, cap_w = frame.shape[:2]
+            print(f"  [Host] Capture: {cap_w}x{cap_h}")
+        else:
+            # 정적 화면 — 기본 해상도로 시작 (프레임 오면 자동 갱신)
+            cap_w, cap_h = 1920, 1080
+            print(f"  [Host] No frames yet (static screen), using default {cap_w}x{cap_h}")
 
         # 스케일 결정 (4K면 자동으로 1080p로)
         scale = self.args.scale
@@ -114,7 +117,7 @@ class GhostHost:
         if scale < 1.0:
             print(f"  [Host] Encoding at: {self.enc_w}x{self.enc_h} (scale {scale:.2f})")
 
-        # 4. 인코더 시작 (입력=출력 해상도, Python에서 미리 리사이즈)
+        # 4. 인코더 시작
         self.encoder = H264Encoder(
             width=self.enc_w,
             height=self.enc_h,
@@ -124,6 +127,17 @@ class GhostHost:
         )
         self.encoder.on_nal = self._on_nal
         self.encoder.start()
+
+        # 첫 프레임 없으면 검은 화면으로 SPS/PPS 강제 생성
+        if frame is None:
+            black = np.zeros((self.enc_h, self.enc_w, 4), dtype=np.uint8)
+            self.encoder.encode_frame(black)
+            # SPS/PPS 생성 대기
+            for _ in range(20):
+                if self.encoder.sps and self.encoder.pps:
+                    break
+                time.sleep(0.05)
+            print(f"  [Host] Black frame encoded for SPS/PPS (sps={self.encoder.sps is not None})")
 
         self.input_handler.update_resolution(self.enc_w, self.enc_h)
 
