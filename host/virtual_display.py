@@ -5,14 +5,18 @@
 지원 드라이버:
   1. Parsec VDD (IOCTL 기반)
   2. VirtualDrivers VDD (Named Pipe 기반)
+
+드라이버 미설치 시 번들된 VirtualDrivers VDD 자동 설치
 """
 
 import ctypes
 import ctypes.wintypes
 import struct
+import subprocess
 import threading
 import time
 import os
+import sys
 
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
 
@@ -26,6 +30,15 @@ INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
 # SetupAPI
 DIGCF_PRESENT = 0x02
 DIGCF_DEVICEINTERFACE = 0x10
+
+# 번들된 드라이버 경로 (프로젝트 루트/drivers/)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DRIVERS_DIR = os.path.join(_PROJECT_ROOT, "drivers")
+NEFCON_EXE = os.path.join(DRIVERS_DIR, "nefconw.exe")
+VDD_DIR = os.path.join(DRIVERS_DIR, "vdd", "VirtualDisplayDriver")
+VDD_INF = os.path.join(VDD_DIR, "MttVDD.inf")
+VDD_CAT = os.path.join(VDD_DIR, "mttvdd.cat")
+VDD_HARDWARE_ID = "Root\\MttVDD"
 
 
 class SP_DEVICE_INTERFACE_DATA(ctypes.Structure):
@@ -42,6 +55,135 @@ class SP_DEVICE_INTERFACE_DETAIL_DATA_A(ctypes.Structure):
         ("cbSize", ctypes.wintypes.DWORD),
         ("DevicePath", ctypes.c_char * 256),
     ]
+
+
+# ============================================================
+#  드라이버 자동 설치
+# ============================================================
+
+def is_admin():
+    """관리자 권한 확인"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def is_vdd_installed():
+    """VirtualDrivers VDD 설치 여부 확인 (pnputil)"""
+    try:
+        result = subprocess.run(
+            ["pnputil", "/enum-devices", "/class", "Display"],
+            capture_output=True, text=True, timeout=10
+        )
+        return "MttVDD" in result.stdout or "Root\\MttVDD" in result.stdout
+    except Exception:
+        return False
+
+
+def _import_certificates():
+    """드라이버 카탈로그(.cat)에서 인증서 추출 후 TrustedPublisher에 등록"""
+    if not os.path.exists(VDD_CAT):
+        return False
+
+    ps_script = f'''
+$catFile = "{VDD_CAT.replace(os.sep, '/')}"
+$catBytes = [System.IO.File]::ReadAllBytes($catFile)
+$certs = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+$certs.Import($catBytes)
+$store = New-Object System.Security.Cryptography.X509Certificates.X509Store("TrustedPublisher", "LocalMachine")
+$store.Open("ReadWrite")
+foreach ($cert in $certs) {{
+    $store.Add($cert)
+}}
+$store.Close()
+Write-Output "OK"
+'''
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-Command", ps_script],
+            capture_output=True, text=True, timeout=30
+        )
+        return "OK" in result.stdout
+    except Exception as e:
+        print(f"  [VDisplay] Certificate import error: {e}")
+        return False
+
+
+def install_vdd():
+    """번들된 VirtualDrivers VDD 설치"""
+    print("  [VDisplay] === Virtual Display Driver Install ===")
+
+    # 번들 파일 확인
+    if not os.path.exists(NEFCON_EXE):
+        print(f"  [VDisplay] nefconw.exe not found at {NEFCON_EXE}")
+        return False
+    if not os.path.exists(VDD_INF):
+        print(f"  [VDisplay] MttVDD.inf not found at {VDD_INF}")
+        return False
+
+    # 관리자 권한 확인
+    if not is_admin():
+        print("  [VDisplay] Admin privileges required - requesting elevation...")
+        # 관리자 권한으로 설치 스크립트 실행
+        install_script = os.path.join(DRIVERS_DIR, "_install.py")
+        host_dir = os.path.dirname(os.path.abspath(__file__))
+
+        with open(install_script, "w") as f:
+            f.write(f'''import sys, os
+sys.path.insert(0, r"{host_dir}")
+from virtual_display import _do_install
+success = _do_install()
+sys.exit(0 if success else 1)
+''')
+
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, f'"{install_script}"', None, 1)
+        if ret > 32:
+            print("  [VDisplay] Waiting for elevated installer...")
+            for _ in range(60):
+                time.sleep(1)
+                if is_vdd_installed():
+                    print("  [VDisplay] Driver installed successfully!")
+                    return True
+            print("  [VDisplay] Install timed out")
+        else:
+            print("  [VDisplay] UAC denied or elevation failed")
+        return False
+
+    return _do_install()
+
+
+def _do_install():
+    """실제 설치 수행 (관리자 권한 필요)"""
+    # 1. 인증서 등록 (신뢰 프롬프트 방지)
+    print("  [VDisplay] Importing driver certificates...")
+    _import_certificates()
+
+    # 2. nefcon으로 드라이버 설치
+    print("  [VDisplay] Installing driver with nefcon...")
+    try:
+        result = subprocess.run(
+            [NEFCON_EXE, "install", VDD_INF, VDD_HARDWARE_ID],
+            capture_output=True, text=True, timeout=30,
+            cwd=VDD_DIR
+        )
+        print(f"  [VDisplay] nefcon output: {result.stdout.strip()}")
+        if result.returncode != 0 and result.stderr:
+            print(f"  [VDisplay] nefcon stderr: {result.stderr.strip()}")
+    except Exception as e:
+        print(f"  [VDisplay] nefcon error: {e}")
+        return False
+
+    # 3. 설치 확인
+    time.sleep(2)
+    if is_vdd_installed():
+        print("  [VDisplay] Driver installed successfully!")
+        return True
+
+    print("  [VDisplay] Driver install may have failed, check Device Manager")
+    return False
 
 
 # ============================================================
@@ -320,11 +462,11 @@ class VirtualDriversVDD:
 
 
 # ============================================================
-#  통합 매니저 (자동 감지)
+#  통합 매니저 (자동 감지 + 자동 설치)
 # ============================================================
 
 class VirtualDisplayManager:
-    """가상 디스플레이 매니저 - 사용 가능한 드라이버 자동 감지"""
+    """가상 디스플레이 매니저 - 사용 가능한 드라이버 자동 감지/설치"""
 
     def __init__(self):
         self.backend = None
@@ -349,10 +491,13 @@ class VirtualDisplayManager:
             print(f"  [VDisplay] Detected: VirtualDrivers VDD")
             return True
 
-        print("  [VDisplay] No virtual display driver found")
-        print("  [VDisplay] Install one of:")
-        print("  [VDisplay]   - Parsec VDD: https://github.com/nomi-san/parsec-vdd")
-        print("  [VDisplay]   - Virtual Display Driver: https://github.com/VirtualDrivers/Virtual-Display-Driver")
+        # 3. pnputil로 설치는 됐지만 파이프가 아직 안 열린 경우
+        if is_vdd_installed():
+            self.backend = vd
+            self.backend_name = "VirtualDrivers VDD"
+            print(f"  [VDisplay] Detected: VirtualDrivers VDD (device present)")
+            return True
+
         return False
 
     def has_physical_display(self):
@@ -367,6 +512,7 @@ class VirtualDisplayManager:
     def ensure_display(self, width=1920, height=1080, refresh=60):
         """
         모니터가 없으면 가상 디스플레이 자동 생성.
+        드라이버 미설치 시 자동 설치 시도.
         이미 모니터가 있으면 아무것도 안 함.
         반환: True(준비 완료), False(실패)
         """
@@ -378,7 +524,19 @@ class VirtualDisplayManager:
 
         if not self.backend:
             if not self.detect():
-                return False
+                # 드라이버 없음 → 자동 설치 시도
+                print(f"  [VDisplay] No driver found, attempting auto-install...")
+                if install_vdd():
+                    # 설치 후 재감지
+                    time.sleep(2)
+                    if not self.detect():
+                        print(f"  [VDisplay] Driver installed but not responding yet")
+                        # VirtualDrivers VDD를 기본으로 설정
+                        self.backend = VirtualDriversVDD()
+                        self.backend_name = "VirtualDrivers VDD"
+                else:
+                    print(f"  [VDisplay] Auto-install failed")
+                    return False
 
         # 드라이버 열기
         if not self.backend.open():

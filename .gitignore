@@ -3,3 +3,4 @@ __pycache__/
 *.h264
 *.egg-info/
 .idea/
+drivers/_install.py
