@@ -296,6 +296,8 @@ class DXGICapture:
         # IDXGIOutputDuplication::ReleaseFrame (index 14)
         ReleaseFrame = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(dup_vt[14])
 
+        consecutive_frame_errors = 0
+
         while self.running:
             loop_start = time.time()
 
@@ -326,7 +328,6 @@ class DXGICapture:
                 if self._consecutive_reinits >= 3:
                     print(f"  [Capture/DXGI] 연속 {self._consecutive_reinits}회 ACCESS_LOST - 세션 변경 감지, 프로세스 종료")
                     self.running = False
-                    # 프로세스 종료하여 서비스가 새 세션에서 재시작하도록 함
                     import os, signal
                     os.kill(os.getpid(), signal.SIGTERM)
                     break
@@ -344,6 +345,7 @@ class DXGICapture:
                     ctypes.c_long, c_void_p, c_uint, POINTER(DXGI_OUTDUPL_FRAME_INFO), POINTER(c_void_p)
                 )(dup_vt[8])
                 ReleaseFrame = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(dup_vt[14])
+                consecutive_frame_errors = 0
                 continue
             elif hr != 0:
                 print(f"  [Capture/DXGI] AcquireNextFrame error: 0x{hr_unsigned:08X}")
@@ -355,8 +357,17 @@ class DXGICapture:
 
             try:
                 self._process_frame(desktop_resource)
+                consecutive_frame_errors = 0
             except Exception as e:
-                print(f"  [Capture/DXGI] Frame process error: {e}")
+                consecutive_frame_errors += 1
+                if consecutive_frame_errors <= 3 or consecutive_frame_errors % 100 == 0:
+                    print(f"  [Capture/DXGI] Frame process error ({consecutive_frame_errors}): {e}")
+                if consecutive_frame_errors >= 10:
+                    print(f"  [Capture/DXGI] 연속 {consecutive_frame_errors}회 프레임 에러 — 프로세스 종료")
+                    self.running = False
+                    import os, signal
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    break
             finally:
                 # desktop_resource Release
                 if desktop_resource.value:
@@ -493,6 +504,9 @@ class DXGICapture:
                         setattr(self, obj_name, None)
 
                 self._init_dxgi()
+                # 해상도 리셋 → _process_frame에서 staging texture 재생성
+                self.width = 0
+                self.height = 0
                 print(f"  [Capture/DXGI] Reinitialized (attempt {attempt})")
                 return
             except Exception as e:
