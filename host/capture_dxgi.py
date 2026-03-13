@@ -96,6 +96,10 @@ class DXGICapture:
         self.start_time = 0
         self.on_reconnect = None
 
+        # 연속 ACCESS_LOST 감지용
+        self._consecutive_reinits = 0
+        self._last_reinit_time = 0
+
         # COM objects
         self._device = None
         self._context = None
@@ -292,7 +296,23 @@ class DXGICapture:
             if hr_unsigned == DXGI_ERROR_WAIT_TIMEOUT:
                 continue
             elif hr_unsigned in (DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL):
-                print(f"  [Capture/DXGI] Error 0x{hr_unsigned:08X}, reinitializing...")
+                now = time.time()
+                # 연속 빠른 reinit 감지 (5초 이내 재발생 시 카운트 증가)
+                if now - self._last_reinit_time < 5.0:
+                    self._consecutive_reinits += 1
+                else:
+                    self._consecutive_reinits = 1
+                self._last_reinit_time = now
+
+                if self._consecutive_reinits >= 3:
+                    print(f"  [Capture/DXGI] 연속 {self._consecutive_reinits}회 ACCESS_LOST - 세션 변경 감지, 프로세스 종료")
+                    self.running = False
+                    # 프로세스 종료하여 서비스가 새 세션에서 재시작하도록 함
+                    import os, signal
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    break
+
+                print(f"  [Capture/DXGI] Error 0x{hr_unsigned:08X}, reinitializing... ({self._consecutive_reinits}/3)")
                 self._reinit_duplication()
                 # reinit 후 vtable 다시 가져오기
                 if not self._duplication:
@@ -310,6 +330,9 @@ class DXGICapture:
                 print(f"  [Capture/DXGI] AcquireNextFrame error: 0x{hr_unsigned:08X}")
                 time.sleep(0.1)
                 continue
+
+            # 프레임 성공 시 연속 reinit 카운터 초기화
+            self._consecutive_reinits = 0
 
             try:
                 self._process_frame(desktop_resource)
