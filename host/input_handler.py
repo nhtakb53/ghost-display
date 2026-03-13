@@ -314,6 +314,23 @@ def get_device_path():
         return None
 
 
+def _switch_to_active_desktop():
+    """현재 활성 데스크톱(Winlogon/Default)으로 스레드 전환 — 로그인 화면에서 SendInput 동작 필요"""
+    try:
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        DESKTOP_ALL_ACCESS = 0x01FF
+        # 현재 입력을 받고 있는 데스크톱 열기
+        hDesk = user32.OpenInputDesktop(0, True, DESKTOP_ALL_ACCESS)
+        if hDesk:
+            result = user32.SetThreadDesktop(hDesk)
+            if result:
+                return True
+            user32.CloseDesktop(hDesk)
+    except Exception as e:
+        print(f"  [Input] Desktop switch failed: {e}")
+    return False
+
+
 class InputHandler:
     """입력 인젝션 - KSE 커널 드라이버 우선, 실패 시 SendInput 폴백"""
 
@@ -324,6 +341,7 @@ class InputHandler:
         self.connected = False
         self.use_sendinput = False
         self.force_sendinput = force_sendinput
+        self._desktop_switch_time = 0
 
     def connect(self):
         """커널 드라이버에 연결 시도, 실패 시 SendInput 모드"""
@@ -343,7 +361,11 @@ class InputHandler:
         print("  [Input] Falling back to SendInput mode")
         self.use_sendinput = True
         self.connected = True
-        print("  [Input] SendInput mode active")
+        # 즉시 활성 데스크톱 전환 시도
+        if _switch_to_active_desktop():
+            print("  [Input] SendInput mode active (desktop switched)")
+        else:
+            print("  [Input] SendInput mode active (desktop switch failed — lock screen input may not work)")
         return True
 
     def _connect_kse(self):
@@ -544,8 +566,16 @@ class InputHandler:
             req.u.keyboard.flags = flags
             self._ioctl(req)
 
+    def _ensure_desktop(self):
+        """SendInput 전에 활성 데스크톱 확인 (5초마다)"""
+        now = time.time()
+        if now - self._desktop_switch_time > 5.0:
+            _switch_to_active_desktop()
+            self._desktop_switch_time = now
+
     def _send_mouse_input(self, dx, dy, flags, data):
         """SendInput으로 마우스 이벤트 전송"""
+        self._ensure_desktop()
         # MOUSEINPUT: dx(4) dy(4) mouseData(4) dwFlags(4) time(4) dwExtraInfo(ptr)
         ptr_size = ctypes.sizeof(ctypes.c_void_p)
         # INPUT struct: type(4) + padding + MOUSEINPUT
@@ -563,6 +593,7 @@ class InputHandler:
 
     def _send_key_input(self, scan, flags):
         """SendInput으로 키보드 이벤트 전송"""
+        self._ensure_desktop()
         # KEYBDINPUT: wVk(2) wScan(2) dwFlags(4) time(4) dwExtraInfo(ptr)
         inp = (ctypes.c_byte * 40)()
         struct.pack_into("I", inp, 0, self.INPUT_KEYBOARD)  # type

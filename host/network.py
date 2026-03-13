@@ -147,6 +147,11 @@ class StreamServer:
                     if pkt_type == PKT_INPUT and self.on_input:
                         try:
                             event = json.loads(payload.decode("utf-8"))
+                            if not hasattr(self, '_input_count'):
+                                self._input_count = 0
+                            self._input_count += 1
+                            if self._input_count <= 3 or self._input_count % 500 == 0:
+                                print(f"  [Network] Input event #{self._input_count}: {event.get('type','?')}")
                             self.on_input(event)
                         except:
                             pass
