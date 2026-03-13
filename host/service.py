@@ -236,6 +236,9 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
             except:
                 pass
 
+        # 포트 점유 프로세스도 정리
+        self._kill_port_holders()
+
     def SvcDoRun(self):
         """서비스 메인"""
         servicemanager.LogMsg(
@@ -251,11 +254,40 @@ class GhostDisplayService(win32serviceutil.ServiceFramework):
             logging.error(f"Service error: {e}", exc_info=True)
             servicemanager.LogErrorMsg(f"Ghost Display error: {e}")
 
+    def _kill_port_holders(self):
+        """이전 호스트 프로세스가 포트를 점유하고 있으면 종료"""
+        config = load_config()
+        ports = [config["video_port"], config["control_port"]]
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            pids = set()
+            for line in result.stdout.splitlines():
+                for port in ports:
+                    if f":{port} " in line and ("LISTENING" in line or "UDP" in line):
+                        parts = line.split()
+                        pid = int(parts[-1])
+                        if pid > 0:
+                            pids.add(pid)
+            for pid in pids:
+                try:
+                    subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                                   capture_output=True)
+                    logging.info(f"Killed port-holding process PID {pid}")
+                except:
+                    pass
+        except:
+            pass
+
     def _run(self):
         """사용자 세션에서 호스트 프로세스 실행 + 감시 + 세션 변경 감지"""
         config = load_config()
         cmd = build_command(config)
         logging.info(f"Command: {cmd}")
+
+        # 시작 전 포트 점유 프로세스 정리
+        self._kill_port_holders()
 
         current_session = None
 
