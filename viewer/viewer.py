@@ -409,11 +409,12 @@ class GhostViewer:
     def _udp_recv_loop(self):
         first_udp = True
         first_video = True
+        first_keyframe = True
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
                 if first_udp:
-                    print(f"  [Viewer] First UDP packet from {addr}")
+                    print(f"  [Viewer] First UDP packet from {addr} (+{time.time()-self._connect_start:.1f}s)")
                     first_udp = False
                 if len(data) < HEADER_SIZE:
                     continue
@@ -423,8 +424,11 @@ class GhostViewer:
 
                 if pkt_type == PKT_VIDEO:
                     if first_video:
-                        print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B)")
+                        print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B) (+{time.time()-self._connect_start:.1f}s)")
                         first_video = False
+                    if first_keyframe and (flags & FLAG_KEYFRAME):
+                        print(f"  [Viewer] First KEYFRAME received! (+{time.time()-self._connect_start:.1f}s)")
+                        first_keyframe = False
                     self._handle_video(flags, payload)
                 self.bytes_received += len(data)
 
