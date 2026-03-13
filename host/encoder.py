@@ -11,17 +11,24 @@ import time
 import os
 
 
-FFMPEG_PATHS = [
-    os.path.expanduser("~/AppData/Local/Microsoft/WinGet/Links/ffmpeg.exe"),
-    "ffmpeg",
-    "ffmpeg.exe",
-]
-
-
 def find_ffmpeg():
-    for path in FFMPEG_PATHS:
+    """FFmpeg 바이너리 경로 탐색 (내장 모듈 → 시스템 PATH 순)"""
+    # 1. imageio-ffmpeg 내장 바이너리
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        pass
+
+    # 2. 시스템 경로
+    for path in [
+        os.path.expanduser("~/AppData/Local/Microsoft/WinGet/Links/ffmpeg.exe"),
+        "ffmpeg",
+        "ffmpeg.exe",
+    ]:
         if os.path.exists(path):
             return path
+
     return "ffmpeg"
 
 

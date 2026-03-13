@@ -4,3 +4,4 @@ pygame
 opencv-python
 miniupnpc
 pywin32
+imageio-ffmpeg
