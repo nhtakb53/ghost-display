@@ -262,6 +262,7 @@ class DXGICapture:
         frame_interval = 1.0 / self.target_fps
         DXGI_ERROR_WAIT_TIMEOUT = 0x887A0027
         DXGI_ERROR_ACCESS_LOST = 0x887A0026
+        DXGI_ERROR_INVALID_CALL = 0x887A0001
 
         dup_vt = ctypes.cast(
             ctypes.cast(self._duplication, POINTER(c_void_p))[0],
@@ -286,14 +287,27 @@ class DXGICapture:
             timeout_ms = int(frame_interval * 1000) + 50
             hr = AcquireNextFrame(self._duplication, timeout_ms, byref(frame_info), byref(desktop_resource))
 
-            if hr & 0xFFFFFFFF == DXGI_ERROR_WAIT_TIMEOUT:
+            hr_unsigned = hr & 0xFFFFFFFF
+
+            if hr_unsigned == DXGI_ERROR_WAIT_TIMEOUT:
                 continue
-            elif hr & 0xFFFFFFFF == DXGI_ERROR_ACCESS_LOST:
-                print("  [Capture/DXGI] Access lost, reinitializing...")
+            elif hr_unsigned in (DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL):
+                print(f"  [Capture/DXGI] Error 0x{hr_unsigned:08X}, reinitializing...")
                 self._reinit_duplication()
+                # reinit 후 vtable 다시 가져오기
+                if not self._duplication:
+                    break
+                dup_vt = ctypes.cast(
+                    ctypes.cast(self._duplication, POINTER(c_void_p))[0],
+                    POINTER(c_void_p * 20)
+                ).contents
+                AcquireNextFrame = ctypes.WINFUNCTYPE(
+                    ctypes.c_long, c_void_p, c_uint, POINTER(DXGI_OUTDUPL_FRAME_INFO), POINTER(c_void_p)
+                )(dup_vt[8])
+                ReleaseFrame = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p)(dup_vt[14])
                 continue
             elif hr != 0:
-                print(f"  [Capture/DXGI] AcquireNextFrame error: 0x{hr & 0xFFFFFFFF:08X}")
+                print(f"  [Capture/DXGI] AcquireNextFrame error: 0x{hr_unsigned:08X}")
                 time.sleep(0.1)
                 continue
 
