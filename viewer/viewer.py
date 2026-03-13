@@ -214,11 +214,18 @@ class GhostViewer:
     def _read_decoded_frames(self):
         """FFmpeg stdout에서 raw 프레임 읽기 → pygame Surface 변환"""
         frame_size = self.stream_width * self.stream_height * 3  # BGR24
+        frame_count = 0
 
         while self.running and self.decoder:
             try:
                 data = self.decoder.stdout.read(frame_size)
                 if not data or len(data) < frame_size:
+                    print(f"  [Viewer] Decoder EOF: got {len(data) if data else 0}/{frame_size} bytes after {frame_count} frames")
+                    # FFmpeg stderr 확인
+                    if self.decoder and self.decoder.stderr:
+                        err = self.decoder.stderr.read(4096)
+                        if err:
+                            print(f"  [Viewer] FFmpeg error: {err.decode('utf-8', errors='replace')}")
                     break
 
                 # BGR → pygame Surface
@@ -227,6 +234,10 @@ class GhostViewer:
                 # BGR→RGB + transpose for pygame: (H, W, 3) → (W, H, 3)
                 rgb = np.ascontiguousarray(frame[:, :, ::-1])
                 surface = pygame.surfarray.make_surface(rgb.transpose(1, 0, 2))
+
+                frame_count += 1
+                if frame_count in (1, 5, 10):
+                    print(f"  [Viewer] Frame decoded #{frame_count} ({frame_size} bytes)")
 
                 with self.frame_lock:
                     self.latest_surface = surface
@@ -349,9 +360,16 @@ class GhostViewer:
     # --- 네트워크 ---
 
     def _udp_recv_loop(self):
+        udp_timeout_count = 0
+        first_packet = True
         while self.running:
             try:
                 data, addr = self.udp_sock.recvfrom(65536)
+                if first_packet:
+                    print(f"  [Viewer] UDP: first packet received from {addr[0]}:{addr[1]} ({len(data)} bytes)")
+                    first_packet = False
+                udp_timeout_count = 0
+
                 if len(data) < HEADER_SIZE:
                     continue
 
@@ -363,6 +381,10 @@ class GhostViewer:
                 self.bytes_received += len(data)
 
             except socket.timeout:
+                udp_timeout_count += 1
+                if udp_timeout_count % 10 == 1:
+                    print(f"  [Viewer] UDP: no packets received ({udp_timeout_count * 0.5:.0f}s elapsed, "
+                          f"total received: {self.bytes_received} bytes, {self.nals_received} NALs)")
                 continue
             except Exception as e:
                 if self.running:
@@ -380,9 +402,14 @@ class GhostViewer:
             self._process_nal(payload, flags)
 
     def _process_nal(self, nal_data, flags):
+        if self.nals_received == 0:
+            nal_byte = nal_data[4] if len(nal_data) > 4 and nal_data[:4] == b'\x00\x00\x00\x01' else (nal_data[0] if nal_data else 0)
+            print(f"  [Viewer] First NAL: {len(nal_data)} bytes, type={nal_byte & 0x1F}, keyframe={bool(flags & FLAG_KEYFRAME)}")
+
         if self.waiting_for_keyframe:
             if flags & FLAG_KEYFRAME:
                 self.waiting_for_keyframe = False
+                print(f"  [Viewer] Keyframe received, decoding started")
             elif self._is_sps_or_pps(nal_data):
                 pass
             else:
@@ -390,6 +417,8 @@ class GhostViewer:
 
         self._feed_decoder(nal_data)
         self.nals_received += 1
+        if self.nals_received in (1, 10, 50, 100):
+            print(f"  [Viewer] NALs decoded: {self.nals_received}, bytes fed to decoder: {len(nal_data)}")
 
     def _is_sps_or_pps(self, data):
         if data[:4] == b'\x00\x00\x00\x01':
