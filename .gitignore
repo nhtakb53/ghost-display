@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.h264
 *.egg-info/
+.idea/
