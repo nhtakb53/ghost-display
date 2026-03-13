@@ -604,9 +604,11 @@ class GhostViewer:
                     flag_str = "|".join(flag_parts) if flag_parts else "-"
 
                     if pkt_type == PKT_VIDEO:
-                        # NAL 타입 식별
+                        # NAL 타입은 첫 fragment나 단독 패킷에서만 식별 가능
                         nal_info = ""
-                        if payload:
+                        is_first_or_solo = not (flags & FLAG_FRAGMENT) or \
+                            (flags & FLAG_FRAGMENT and getattr(self, '_frag_count', 0) == 0)
+                        if is_first_or_solo and payload:
                             if payload[:4] == b'\x00\x00\x00\x01' and len(payload) > 4:
                                 nt = payload[4] & 0x1F
                             elif payload[:3] == b'\x00\x00\x01' and len(payload) > 3:
@@ -615,8 +617,34 @@ class GhostViewer:
                                 nt = payload[0] & 0x1F if payload else -1
                             nal_name = NAL_TYPE_NAMES.get(nt, f"type_{nt}")
                             nal_info = f" NAL={nal_name}"
-                        print(f"  [UDP<] {pkt_name} seq={seq} flags=[{flag_str}] "
-                              f"{len(payload)}B{nal_info}")
+
+                        # fragment 중간 패킷은 카운트만 하고 출력 생략
+                        if flags & FLAG_FRAGMENT and not (flags & FLAG_LAST_FRAGMENT):
+                            if not hasattr(self, '_frag_count'):
+                                self._frag_count = 0
+                                self._frag_total_bytes = 0
+                            self._frag_count += 1
+                            self._frag_total_bytes += len(payload)
+                            # 첫 fragment만 출력 (NAL 타입 포함)
+                            if self._frag_count == 1:
+                                print(f"  [UDP<] {pkt_name} seq={seq} flags=[{flag_str}] "
+                                      f"{len(payload)}B{nal_info} ...")
+                        elif flags & FLAG_LAST_FRAGMENT:
+                            frag_count = getattr(self, '_frag_count', 0) + 1
+                            frag_bytes = getattr(self, '_frag_total_bytes', 0) + len(payload)
+                            print(f"  [UDP<] {pkt_name} seq={seq} flags=[{flag_str}] "
+                                  f"조립완료 {frag_count}조각 {frag_bytes}B")
+                            self._frag_count = 0
+                            self._frag_total_bytes = 0
+                        else:
+                            print(f"  [UDP<] {pkt_name} seq={seq} flags=[{flag_str}] "
+                                  f"{len(payload)}B{nal_info}")
+
+                        # fragment 상태 추적
+                        if flags & FLAG_FRAGMENT and not (flags & FLAG_LAST_FRAGMENT):
+                            self._in_fragment = True
+                        else:
+                            self._in_fragment = False
                     else:
                         print(f"  [UDP<] {pkt_name} seq={seq} {len(payload)}B")
 
@@ -624,7 +652,10 @@ class GhostViewer:
                     if first_video:
                         print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B)")
                         first_video = False
-                    if flags & FLAG_KEYFRAME:
+                    # 키프레임은 단독 패킷이거나 첫 fragment일 때만 카운트
+                    if (flags & FLAG_KEYFRAME) and not (
+                        (flags & FLAG_FRAGMENT) and self.frag_buffer
+                    ):
                         self.keyframes_received += 1
                         if first_keyframe:
                             print(f"  [Viewer] First KEYFRAME received!")
