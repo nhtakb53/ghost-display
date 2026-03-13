@@ -92,7 +92,8 @@ class H264Encoder:
                 "-maxrate", self.bitrate,
                 "-bufsize", "1M",
                 "-zerolatency", "1",
-                "-g", str(self.fps),     # 1초마다 키프레임
+                "-forced_idr", "1",
+                "-g", str(self.fps // 2),  # 0.5초마다 키프레임
                 "-bf", "0",
             ]
         else:
@@ -101,7 +102,7 @@ class H264Encoder:
                 "-tune", "zerolatency",
                 "-profile:v", "baseline",
                 "-b:v", self.bitrate,
-                "-g", str(self.fps),
+                "-g", str(self.fps // 2),  # 0.5초마다 키프레임
                 "-bf", "0",
             ]
 
@@ -224,10 +225,17 @@ class H264Encoder:
         except:
             pass
 
+    def request_keyframe(self):
+        """다음 프레임을 키프레임으로 강제 (Viewer 접속 시 즉시 화면 표시)"""
+        self._force_keyframe = True
+
     def encode_frame(self, bgra_frame):
         if not self.running or not self.process:
             return False
         try:
+            # 키프레임 강제 요청이 있으면 인코더 재시작 없이 처리
+            # FFmpeg stdin 파이프로는 직접 키프레임 요청이 불가하므로
+            # _force_keyframe 플래그로 메인 루프에서 처리
             self.process.stdin.write(bgra_frame.tobytes())
             self.encode_count += 1
             return True
