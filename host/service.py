@@ -171,22 +171,29 @@ def get_active_session_id():
         if session['State'] == win32ts.WTSActive and session['SessionId'] != 0:
             return session['SessionId']
 
-    # 활성 세션 없음 → Disconnected 세션을 콘솔로 전환 시도
-    if transfer_disconnected_session_to_console():
-        time.sleep(3)  # 세션 전환 안정화 대기
-        # 전환 후 다시 확인
-        console_session = win32ts.WTSGetActiveConsoleSessionId()
-        if console_session != 0xFFFFFFFF:
-            try:
-                state = win32ts.WTSQuerySessionInformation(
-                    win32ts.WTS_CURRENT_SERVER_HANDLE,
-                    console_session,
-                    win32ts.WTSConnectState
-                )
-                if state == win32ts.WTSActive:
-                    return console_session
-            except:
-                pass
+    # 활성 세션 없음 → Disconnected 세션을 콘솔로 전환 시도 (쿨다운 60초)
+    now = time.time()
+    last_tscon = getattr(get_active_session_id, '_last_tscon', 0)
+    if now - last_tscon > 60:
+        if transfer_disconnected_session_to_console():
+            get_active_session_id._last_tscon = now
+            time.sleep(5)  # 세션 전환 안정화 대기
+            # 전환 후 다시 확인
+            console_session = win32ts.WTSGetActiveConsoleSessionId()
+            if console_session != 0xFFFFFFFF:
+                try:
+                    state = win32ts.WTSQuerySessionInformation(
+                        win32ts.WTS_CURRENT_SERVER_HANDLE,
+                        console_session,
+                        win32ts.WTSConnectState
+                    )
+                    if state == win32ts.WTSActive:
+                        return console_session
+                except:
+                    pass
+            # tscon 후에도 Active 안 되면 콘솔 세션이라도 반환
+            if console_session != 0xFFFFFFFF:
+                return console_session
 
     return None
 

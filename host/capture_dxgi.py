@@ -458,14 +458,18 @@ class DXGICapture:
             Release(texture)
 
     def _reinit_duplication(self):
-        """Desktop Duplication 재초기화 (ACCESS_LOST 시)"""
+        """Desktop Duplication 재초기화 (ACCESS_LOST 시)
+        인코더 재시작 없이 캡처만 재초기화 — SPS/PPS 캐시 유지"""
         if self._duplication:
-            dup_vt = ctypes.cast(
-                ctypes.cast(self._duplication, POINTER(c_void_p))[0],
-                POINTER(c_void_p * 3)
-            ).contents
-            Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(dup_vt[2])
-            Release(self._duplication)
+            try:
+                dup_vt = ctypes.cast(
+                    ctypes.cast(self._duplication, POINTER(c_void_p))[0],
+                    POINTER(c_void_p * 3)
+                ).contents
+                Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(dup_vt[2])
+                Release(self._duplication)
+            except:
+                pass
             self._duplication = None
 
         for attempt in range(1, 61):
@@ -474,8 +478,6 @@ class DXGICapture:
             try:
                 self._init_dxgi()
                 print(f"  [Capture/DXGI] Reinitialized (attempt {attempt})")
-                if self.on_reconnect:
-                    self.on_reconnect()
                 return
             except Exception as e:
                 print(f"  [Capture/DXGI] Reinit failed ({attempt}): {e}")

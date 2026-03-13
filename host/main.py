@@ -81,8 +81,7 @@ class GhostHost:
         self.network.on_connected = self._on_viewer_connected
         self.network.start()
 
-        # 3. 캡처 시작
-        self.capture.on_reconnect = self._on_capture_reconnect
+        # 3. 캡처 시작 (인코더 재시작 불필요 — SPS/PPS 캐시 유지)
         self.capture.start()
 
         # 첫 프레임 대기 (해상도 확인, 최대 30초)
