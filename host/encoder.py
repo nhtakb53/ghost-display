@@ -20,12 +20,22 @@ def find_ffmpeg():
     except ImportError:
         pass
 
-    # 2. 시스템 경로
-    for path in [
+    # 2. 시스템 경로 (SYSTEM 권한에서도 찾을 수 있도록 모든 사용자 폴더 탐색)
+    candidates = [
         os.path.expanduser("~/AppData/Local/Microsoft/WinGet/Links/ffmpeg.exe"),
-        "ffmpeg",
-        "ffmpeg.exe",
-    ]:
+    ]
+    # SYSTEM 권한 실행 시 ~ 가 다른 경로이므로 Users 폴더 전체 탐색
+    users_dir = os.path.join(os.environ.get("SystemDrive", "C:"), os.sep, "Users")
+    if os.path.exists(users_dir):
+        try:
+            for user in os.listdir(users_dir):
+                winget_ffmpeg = os.path.join(users_dir, user, "AppData", "Local", "Microsoft", "WinGet", "Links", "ffmpeg.exe")
+                if winget_ffmpeg not in candidates:
+                    candidates.append(winget_ffmpeg)
+        except:
+            pass
+    candidates += ["ffmpeg", "ffmpeg.exe"]
+    for path in candidates:
         if os.path.exists(path):
             return path
 
