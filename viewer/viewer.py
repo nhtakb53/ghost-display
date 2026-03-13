@@ -125,6 +125,17 @@ class GhostViewer:
         # 통계
         self.bytes_received = 0
         self.nals_received = 0
+        self.frames_decoded = 0
+        self.frames_rendered = 0
+        self.packets_received = 0
+        self.keyframes_received = 0
+        self._stats_start = 0
+        self._last_stats_time = 0
+        self._last_stats_bytes = 0
+        self._last_stats_nals = 0
+        self._last_stats_frames_decoded = 0
+        self._last_stats_frames_rendered = 0
+        self._last_stats_packets = 0
 
         # 입력 활성화 (F12로 토글)
         self.input_active = False
@@ -215,6 +226,11 @@ class GhostViewer:
         threading.Thread(target=self._udp_recv_loop, daemon=True).start()
         print(f"  [Viewer] UDP recv started")
 
+        # 6. 상태 로그 스레드
+        self._stats_start = time.time()
+        self._last_stats_time = self._stats_start
+        threading.Thread(target=self._stats_loop, daemon=True).start()
+
         # 6. pygame 메인 루프 (표시 + 입력)
         self._pygame_loop()
 
@@ -272,6 +288,8 @@ class GhostViewer:
                 while len(buf) >= frame_size:
                     frame_data = bytes(buf[:frame_size])
                     del buf[:frame_size]
+
+                    self.frames_decoded += 1
 
                     if first_frame:
                         print(f"  [Viewer] *** First frame decoded! ***")
@@ -386,6 +404,7 @@ class GhostViewer:
             # 새 프레임 표시
             with self.frame_lock:
                 if self.new_frame and self.latest_surface:
+                    self.frames_rendered += 1
                     if not hasattr(self, '_first_render_logged'):
                         print(f"  [Viewer] *** First frame rendered! ***")
                         self._first_render_logged = True
@@ -413,6 +432,50 @@ class GhostViewer:
                 "e0": False,
             })
 
+    def _stats_loop(self):
+        """5초마다 상태 로그 출력"""
+        while self.running:
+            time.sleep(5)
+            if not self.running:
+                break
+
+            now = time.time()
+            dt = now - self._last_stats_time
+            if dt <= 0:
+                continue
+
+            # 구간 통계 계산
+            d_bytes = self.bytes_received - self._last_stats_bytes
+            d_nals = self.nals_received - self._last_stats_nals
+            d_decoded = self.frames_decoded - self._last_stats_frames_decoded
+            d_rendered = self.frames_rendered - self._last_stats_frames_rendered
+            d_packets = self.packets_received - self._last_stats_packets
+            mbps = d_bytes * 8 / dt / 1024 / 1024
+
+            # 상태 결정
+            if d_decoded > 0:
+                status = "streaming"
+            elif d_packets > 0:
+                status = "receiving (no decode)"
+            elif self.got_sps_pps:
+                status = "waiting for video"
+            elif self.tcp_sock:
+                status = "connected (no SPS/PPS)"
+            else:
+                status = "disconnected"
+
+            print(f"  [Stats] recv:{mbps:.1f}Mbps {d_packets}pkts {d_nals}nals | "
+                  f"dec:{d_decoded/dt:.0f}fps render:{d_rendered/dt:.0f}fps | "
+                  f"keyframes:{self.keyframes_received} | {status}")
+
+            # 스냅샷 갱신
+            self._last_stats_time = now
+            self._last_stats_bytes = self.bytes_received
+            self._last_stats_nals = self.nals_received
+            self._last_stats_frames_decoded = self.frames_decoded
+            self._last_stats_frames_rendered = self.frames_rendered
+            self._last_stats_packets = self.packets_received
+
     # --- 네트워크 ---
 
     def _udp_recv_loop(self):
@@ -431,13 +494,17 @@ class GhostViewer:
                 pkt_type, flags, seq, size = struct.unpack(HEADER_FMT, data[:HEADER_SIZE])
                 payload = data[HEADER_SIZE:]
 
+                self.packets_received += 1
+
                 if pkt_type == PKT_VIDEO:
                     if first_video:
                         print(f"  [Viewer] First video packet (flags={flags:#x}, {len(payload)}B)")
                         first_video = False
-                    if first_keyframe and (flags & FLAG_KEYFRAME):
-                        print(f"  [Viewer] First KEYFRAME received!")
-                        first_keyframe = False
+                    if flags & FLAG_KEYFRAME:
+                        self.keyframes_received += 1
+                        if first_keyframe:
+                            print(f"  [Viewer] First KEYFRAME received!")
+                            first_keyframe = False
                     self._handle_video(flags, payload)
                 self.bytes_received += len(data)
 
