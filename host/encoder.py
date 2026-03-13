@@ -263,13 +263,10 @@ class H264Encoder:
             return False
 
     def get_sps_pps(self):
-        """캐시된 SPS + PPS 반환 (Viewer 접속 시 전송용)"""
-        parts = []
-        if self.sps:
-            parts.append(self.sps)
-        if self.pps:
-            parts.append(self.pps)
-        return b"".join(parts) if parts else None
+        """캐시된 SPS + PPS 반환 (둘 다 있을 때만 반환)"""
+        if self.sps and self.pps:
+            return self.sps + self.pps
+        return None
 
     def get_fps(self):
         elapsed = time.time() - self.start_time

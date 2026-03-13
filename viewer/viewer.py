@@ -681,11 +681,18 @@ class GhostViewer:
             self._process_nal(payload, flags)
 
     def _process_nal(self, nal_data, flags):
+        # UDP로 받은 SPS/PPS도 디코더에 주입 (TCP에서 못 받았을 때 보완)
+        if self._is_sps_or_pps(nal_data):
+            if not self.got_sps_pps:
+                print(f"  [Viewer] SPS/PPS received via UDP ({len(nal_data)}B)")
+            self.got_sps_pps = True
+            self._feed_decoder(nal_data)
+            self.nals_received += 1
+            return
+
         if self.waiting_for_keyframe:
             if flags & FLAG_KEYFRAME:
                 self.waiting_for_keyframe = False
-            elif self._is_sps_or_pps(nal_data):
-                pass
             else:
                 return
 
