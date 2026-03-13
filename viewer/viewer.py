@@ -200,12 +200,13 @@ class GhostViewer:
             "-flags", "low_delay",
             "-fflags", "nobuffer",
             "-f", "h264",
-            "-probesize", "64",
-            "-analyzeduration", "0",
+            "-probesize", "1M",
+            "-analyzeduration", "1000000",
             "-i", "pipe:0",
             "-f", "rawvideo",
             "-pix_fmt", "bgr24",
             "-s", f"{self.stream_width}x{self.stream_height}",
+            "-threads", "2",
             "pipe:1",
         ]
 
@@ -219,6 +220,8 @@ class GhostViewer:
 
         # 디코딩된 프레임 읽기 스레드
         threading.Thread(target=self._read_decoded_frames, daemon=True).start()
+        # FFmpeg 에러 읽기 스레드
+        threading.Thread(target=self._read_decoder_errors, daemon=True).start()
         print(f"  [Viewer] Decoder started ({self.stream_width}x{self.stream_height})")
 
     def _read_decoded_frames(self):
@@ -231,11 +234,9 @@ class GhostViewer:
                 data = self.decoder.stdout.read(frame_size)
                 if not data or len(data) < frame_size:
                     print(f"  [Viewer] Decoder EOF: got {len(data) if data else 0}/{frame_size} bytes after {frame_count} frames")
-                    # FFmpeg stderr 확인
-                    if self.decoder and self.decoder.stderr:
-                        err = self.decoder.stderr.read(4096)
-                        if err:
-                            print(f"  [Viewer] FFmpeg error: {err.decode('utf-8', errors='replace')}")
+                    if self.decoder:
+                        ret = self.decoder.poll()
+                        print(f"  [Viewer] FFmpeg process exit code: {ret}")
                     break
 
                 # BGR → pygame Surface
@@ -258,13 +259,32 @@ class GhostViewer:
                     print(f"  [Viewer] Decode error: {e}")
                 break
 
+    def _read_decoder_errors(self):
+        """FFmpeg stderr 비동기 읽기"""
+        try:
+            for line in self.decoder.stderr:
+                msg = line.decode("utf-8", errors="replace").strip()
+                if msg:
+                    print(f"  [Viewer/FFmpeg] {msg}")
+        except:
+            pass
+
     def _feed_decoder(self, data):
         """H.264 데이터를 디코더에 전달"""
         if self.decoder and self.decoder.poll() is None:
             try:
                 self.decoder.stdin.write(data)
-            except (BrokenPipeError, OSError):
-                pass
+                self._decoder_bytes_fed = getattr(self, '_decoder_bytes_fed', 0) + len(data)
+                if self._decoder_bytes_fed in range(len(data), len(data) + 1):
+                    # 첫 번째 feed
+                    nal_type = -1
+                    if data[:4] == b'\x00\x00\x00\x01' and len(data) > 4:
+                        nal_type = data[4] & 0x1F
+                    elif data[:3] == b'\x00\x00\x01' and len(data) > 3:
+                        nal_type = data[3] & 0x1F
+                    print(f"  [Viewer] First data fed to decoder: {len(data)} bytes, NAL type={nal_type}")
+            except (BrokenPipeError, OSError) as e:
+                print(f"  [Viewer] Decoder write error: {e}")
 
     def _pygame_loop(self):
         """pygame 메인 루프: 화면 표시 + 입력 캡처"""
@@ -412,10 +432,6 @@ class GhostViewer:
             self._process_nal(payload, flags)
 
     def _process_nal(self, nal_data, flags):
-        if self.nals_received == 0:
-            nal_byte = nal_data[4] if len(nal_data) > 4 and nal_data[:4] == b'\x00\x00\x00\x01' else (nal_data[0] if nal_data else 0)
-            print(f"  [Viewer] First NAL: {len(nal_data)} bytes, type={nal_byte & 0x1F}, keyframe={bool(flags & FLAG_KEYFRAME)}")
-
         if self.waiting_for_keyframe:
             if flags & FLAG_KEYFRAME:
                 self.waiting_for_keyframe = False
