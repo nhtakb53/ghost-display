@@ -155,7 +155,7 @@ class GhostViewer:
 
         # 입력 활성화 (F12로 토글)
         self.input_active = False
-        # 입력 모드 (F11로 전환)
+        # 입력 모드 (F10으로 전환)
         self.input_mode = "kse"
 
     def start(self):
@@ -401,7 +401,7 @@ class GhostViewer:
                         else:
                             pygame.event.set_grab(False)
                             pygame.mouse.set_visible(True)
-                    elif event.key == pygame.K_F11:
+                    elif event.key == pygame.K_F10:
                         new_mode = "sendinput" if self.input_mode == "kse" else "kse"
                         self._send_control({"cmd": "switch_input_mode", "mode": new_mode})
                         self.input_mode = new_mode
@@ -465,7 +465,7 @@ class GhostViewer:
     def _update_title(self):
         state = "ON" if self.input_active else "OFF"
         mode = self.input_mode.upper()
-        pygame.display.set_caption(f"Ghost Display [F12:Input {state}] [F11:{mode}]")
+        pygame.display.set_caption(f"Ghost Display [F12:Input {state}] [F10:{mode}]")
 
     def _send_key(self, key, down):
         """pygame 키 → scan code 변환 후 전송"""
