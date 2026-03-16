@@ -411,7 +411,7 @@ class GhostViewer:
                         self._send_key(event.key, down=True)
 
                 elif event.type == pygame.KEYUP:
-                    if self.input_active and event.key != pygame.K_F12:
+                    if self.input_active and event.key not in (pygame.K_F12, pygame.K_F10):
                         self._send_key(event.key, down=False)
 
                 elif event.type == pygame.MOUSEMOTION:

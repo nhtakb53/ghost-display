@@ -350,7 +350,7 @@ class InputHandler:
             print("  [Input] Forced SendInput mode (--sendinput)")
             self.use_sendinput = True
             self.connected = True
-            print("  [Input] SendInput mode active")
+            self._test_sendinput()
             return True
 
         # 1. KSE 드라이버 시도
@@ -366,6 +366,7 @@ class InputHandler:
             print("  [Input] SendInput mode active (desktop switched)")
         else:
             print("  [Input] SendInput mode active (desktop switch failed — lock screen input may not work)")
+        self._test_sendinput()
         return True
 
     def _connect_kse(self):
@@ -596,6 +597,24 @@ class InputHandler:
             req.u.keyboard.flags = flags
             self._ioctl(req)
 
+    def _test_sendinput(self):
+        """SendInput 동작 테스트 — 마우스 0,0 상대이동 (실제 효과 없음)"""
+        _switch_to_active_desktop()
+        inp = (ctypes.c_byte * 40)()
+        struct.pack_into("I", inp, 0, self.INPUT_MOUSE)
+        struct.pack_into("i", inp, 8, 0)   # dx=0
+        struct.pack_into("i", inp, 12, 0)  # dy=0
+        struct.pack_into("I", inp, 20, self.MOUSEEVENTF_MOVE)  # relative move 0,0
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        ret = user32.SendInput(1, ctypes.byref(inp), 40)
+        err = ctypes.get_last_error()
+        if ret == 1:
+            print(f"  [Input] SendInput 테스트 OK (ret=1)")
+        else:
+            print(f"  [Input] SendInput 테스트 FAILED (ret={ret}, error={err})")
+            if err == 5:
+                print(f"  [Input] ERROR 5 = Access Denied — 관리자 권한으로 실행하거나 UIPI 확인 필요")
+
     def _ensure_desktop(self):
         """SendInput 전에 활성 데스크톱 확인 (5초마다)"""
         now = time.time()
@@ -607,7 +626,6 @@ class InputHandler:
         """SendInput으로 마우스 이벤트 전송"""
         self._ensure_desktop()
         # MOUSEINPUT: dx(4) dy(4) mouseData(4) dwFlags(4) time(4) dwExtraInfo(ptr)
-        ptr_size = ctypes.sizeof(ctypes.c_void_p)
         # INPUT struct: type(4) + padding + MOUSEINPUT
         # 64bit: type(4) + pad(4) + MOUSEINPUT(32) = 40 bytes
         inp = (ctypes.c_byte * 40)()
@@ -619,7 +637,14 @@ class InputHandler:
         struct.pack_into("I", inp, 24, 0)       # time
         # dwExtraInfo = 0 (ptr at offset 28 on 64bit, already zeroed)
         user32 = ctypes.WinDLL('user32', use_last_error=True)
-        user32.SendInput(1, ctypes.byref(inp), 40)
+        ret = user32.SendInput(1, ctypes.byref(inp), 40)
+        if ret == 0:
+            err = ctypes.get_last_error()
+            if not hasattr(self, '_si_mouse_fail'):
+                self._si_mouse_fail = 0
+            self._si_mouse_fail += 1
+            if self._si_mouse_fail <= 5 or self._si_mouse_fail % 100 == 0:
+                print(f"  [Input] SendInput mouse FAILED ({self._si_mouse_fail}): error={err} flags=0x{flags:04X}")
 
     def _send_key_input(self, scan, flags):
         """SendInput으로 키보드 이벤트 전송"""
@@ -632,7 +657,14 @@ class InputHandler:
         struct.pack_into("I", inp, 12, flags)       # dwFlags
         struct.pack_into("I", inp, 16, 0)           # time
         user32 = ctypes.WinDLL('user32', use_last_error=True)
-        user32.SendInput(1, ctypes.byref(inp), 40)
+        ret = user32.SendInput(1, ctypes.byref(inp), 40)
+        if ret == 0:
+            err = ctypes.get_last_error()
+            if not hasattr(self, '_si_key_fail'):
+                self._si_key_fail = 0
+            self._si_key_fail += 1
+            if self._si_key_fail <= 5 or self._si_key_fail % 100 == 0:
+                print(f"  [Input] SendInput key FAILED ({self._si_key_fail}): error={err} scan=0x{scan:02X}")
 
     def switch_mode(self, mode):
         """입력 모드 런타임 전환: 'kse' 또는 'sendinput'"""
