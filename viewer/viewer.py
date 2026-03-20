@@ -153,7 +153,7 @@ class GhostViewer:
         self._last_stats_frames_rendered = 0
         self._last_stats_packets = 0
 
-        # 입력 활성화 (F12로 토글)
+        # 입력 활성화 (창 클릭으로 캡처, Escape로 해제)
         self.input_active = False
         # 입력 모드 (F10으로 전환)
         self.input_mode = "kse"
@@ -378,14 +378,14 @@ class GhostViewer:
         display_h = int(self.stream_height * scale)
 
         screen = pygame.display.set_mode((display_w, display_h), pygame.RESIZABLE)
-        pygame.display.set_caption("Ghost Display [F12: Input OFF]")
+        pygame.display.set_caption("Ghost Display - 클릭하여 입력 캡처")
         clock = pygame.time.Clock()
 
         # 커서 이미지 생성 (흰색 테두리 + 검은색 화살표)
         cursor_surface = self._create_cursor_surface()
 
         print(f"  [Viewer] Window: {display_w}x{display_h}")
-        print(f"  [Viewer] Press F12 to toggle input capture")
+        print(f"  [Viewer] 창 클릭: 입력 캡처 | Escape: 캡처 해제")
 
         while self.running:
             for event in pygame.event.get():
@@ -394,16 +394,13 @@ class GhostViewer:
                     break
 
                 elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_F12:
-                        self.input_active = not self.input_active
-                        state = "ON" if self.input_active else "OFF"
+                    if event.key == pygame.K_ESCAPE and self.input_active:
+                        # Escape: 입력 캡처 해제
+                        self.input_active = False
+                        pygame.event.set_grab(False)
+                        pygame.mouse.set_visible(True)
                         self._update_title()
-                        if self.input_active:
-                            pygame.event.set_grab(True)
-                            pygame.mouse.set_visible(False)
-                        else:
-                            pygame.event.set_grab(False)
-                            pygame.mouse.set_visible(True)
+                        print(f"  [Viewer] 입력 캡처 해제 (Escape)")
                     elif event.key == pygame.K_F10:
                         new_mode = "sendinput" if self.input_mode == "kse" else "kse"
                         self._send_control({"cmd": "switch_input_mode", "mode": new_mode})
@@ -414,26 +411,20 @@ class GhostViewer:
                         self._send_key(event.key, down=True)
 
                 elif event.type == pygame.KEYUP:
-                    if self.input_active and event.key not in (pygame.K_F12, pygame.K_F10):
+                    if self.input_active and event.key not in (pygame.K_ESCAPE, pygame.K_F10):
                         self._send_key(event.key, down=False)
 
-                elif event.type == pygame.MOUSEMOTION:
-                    if self.input_active:
-                        x, y = event.pos
-                        # 표시 좌표 → 스트림 좌표 변환
-                        stream_x = int(x * self.stream_width / display_w)
-                        stream_y = int(y * self.stream_height / display_h)
-                        self._send_input({
-                            "type": "mouse_move",
-                            "x": stream_x,
-                            "y": stream_y,
-                        })
-
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if self.input_active:
+                    if not self.input_active:
+                        # 창 클릭 → 입력 캡처 시작
+                        self.input_active = True
+                        pygame.event.set_grab(True)
+                        pygame.mouse.set_visible(False)
+                        self._update_title()
+                        print(f"  [Viewer] 입력 캡처 시작 (클릭)")
+                    else:
                         btn = {1: "left", 2: "middle", 3: "right"}.get(event.button, "left")
                         if event.button in (4, 5):
-                            # 휠
                             delta = 120 if event.button == 4 else -120
                             self._send_input({"type": "mouse_wheel", "delta": delta})
                         else:
@@ -444,6 +435,17 @@ class GhostViewer:
                         btn = {1: "left", 2: "middle", 3: "right"}.get(event.button, "left")
                         if event.button not in (4, 5):
                             self._send_input({"type": "mouse_up", "button": btn})
+
+                elif event.type == pygame.MOUSEMOTION:
+                    if self.input_active:
+                        x, y = event.pos
+                        stream_x = int(x * self.stream_width / display_w)
+                        stream_y = int(y * self.stream_height / display_h)
+                        self._send_input({
+                            "type": "mouse_move",
+                            "x": stream_x,
+                            "y": stream_y,
+                        })
 
                 elif event.type == pygame.VIDEORESIZE:
                     display_w, display_h = event.w, event.h
@@ -484,9 +486,11 @@ class GhostViewer:
         return surf
 
     def _update_title(self):
-        state = "ON" if self.input_active else "OFF"
-        mode = self.input_mode.upper()
-        pygame.display.set_caption(f"Ghost Display [F12:Input {state}] [F10:{mode}]")
+        if self.input_active:
+            mode = self.input_mode.upper()
+            pygame.display.set_caption(f"Ghost Display - 캡처 중 [Esc:해제] [F10:{mode}]")
+        else:
+            pygame.display.set_caption(f"Ghost Display - 클릭하여 입력 캡처")
 
     def _send_key(self, key, down):
         """pygame 키 → scan code 변환 후 전송"""
