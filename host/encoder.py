@@ -78,6 +78,16 @@ class H264Encoder:
         self.sps = None
         self.pps = None
 
+    @staticmethod
+    def _parse_bitrate(bitrate_str):
+        """'20M' → 20000000, '5000K' → 5000000"""
+        s = str(bitrate_str).strip().upper()
+        if s.endswith("M"):
+            return int(float(s[:-1]) * 1_000_000)
+        elif s.endswith("K"):
+            return int(float(s[:-1]) * 1_000)
+        return int(s)
+
     def start(self):
         ffmpeg = find_ffmpeg()
         encoder = "h264_nvenc" if self.use_nvenc else "libx264"
@@ -102,24 +112,27 @@ class H264Encoder:
 
         if self.use_nvenc:
             cmd += [
-                "-preset", "p1",
+                "-preset", "p4",
                 "-tune", "ull",
-                "-profile:v", "baseline",
+                "-profile:v", "high",
                 "-b:v", self.bitrate,
-                "-maxrate", self.bitrate,
-                "-bufsize", "1M",
+                "-maxrate", str(int(self._parse_bitrate(self.bitrate) * 1.5)),
+                "-bufsize", self.bitrate,
                 "-zerolatency", "1",
                 "-forced_idr", "1",
-                "-g", str(self.fps // 2),  # 0.5초마다 키프레임
+                "-g", str(self.fps),  # 1초마다 키프레임
                 "-bf", "0",
+                "-rc", "cbr",
             ]
         else:
             cmd += [
-                "-preset", "ultrafast",
+                "-preset", "superfast",
                 "-tune", "zerolatency",
-                "-profile:v", "baseline",
+                "-profile:v", "high",
                 "-b:v", self.bitrate,
-                "-g", str(self.fps // 2),  # 0.5초마다 키프레임
+                "-maxrate", str(int(self._parse_bitrate(self.bitrate) * 1.5)),
+                "-bufsize", self.bitrate,
+                "-g", str(self.fps),  # 1초마다 키프레임
                 "-bf", "0",
             ]
 

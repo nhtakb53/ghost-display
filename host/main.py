@@ -290,7 +290,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ghost Display - Host")
     parser.add_argument("--monitor", type=int, default=0, help="Monitor index (default: 0)")
     parser.add_argument("--fps", type=int, default=60, help="Target FPS (default: 60)")
-    parser.add_argument("--bitrate", type=str, default="8M", help="Video bitrate (default: 8M)")
+    parser.add_argument("--bitrate", type=str, default="20M", help="Video bitrate (default: 20M)")
     parser.add_argument("--video-port", type=int, default=9000, help="UDP video port (default: 9000)")
     parser.add_argument("--control-port", type=int, default=9001, help="TCP control port (default: 9001)")
     parser.add_argument("--software", action="store_true", help="Use software encoder (no NVENC)")
