@@ -176,6 +176,16 @@ class MainWindow(QMainWindow):
             mode = ctrl.get("mode", "kse")
             sidebar._mode_combo.setCurrentText(mode.upper())
 
+        elif cmd == "status":
+            msg = ctrl.get("msg", "")
+            video.set_status_text(msg)
+            print(f"  [Viewer] Host: {msg}")
+
+        elif cmd == "error":
+            msg = ctrl.get("msg", "")
+            video.set_status_text(f"오류: {msg}")
+            print(f"  [Viewer] Host error: {msg}")
+
         elif cmd == "host_udp_addr":
             ip = ctrl.get("ip")
             port = ctrl.get("port")

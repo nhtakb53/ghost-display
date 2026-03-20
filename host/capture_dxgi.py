@@ -378,7 +378,8 @@ class DXGICapture:
                     Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(res_vt[2])
                     Release(desktop_resource)
 
-                ReleaseFrame(self._duplication)
+                if self.running and self._duplication:
+                    ReleaseFrame(self._duplication)
 
             # FPS 제한
             elapsed = time.time() - loop_start

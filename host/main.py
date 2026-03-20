@@ -81,18 +81,28 @@ class GhostHost:
         self._wait_loop()
 
     def _on_viewer_connected(self, addr):
-        """Viewer 연결 → 캡처 + 인코더 시작"""
+        """Viewer 연결 → 백그라운드에서 캡처 시작"""
         print(f"  [Host] Viewer connected from {addr}")
 
-        if not self.streaming:
-            try:
-                self._start_streaming()
-            except Exception as e:
-                print(f"  [Host] 스트리밍 시작 실패: {e}")
-                self.network.send_control({"cmd": "error", "msg": str(e)})
-                return
+        if self.streaming:
+            # 이미 스트리밍 중이면 바로 정보 전송
+            self._send_stream_info()
+        else:
+            # 캡처 초기화가 오래 걸릴 수 있으므로 백그라운드에서 실행
+            self.network.send_control({"cmd": "status", "msg": "캡처 초기화 중..."})
+            threading.Thread(target=self._start_streaming_and_notify, daemon=True).start()
 
-        # 스트림 정보 + SPS/PPS 전송
+    def _start_streaming_and_notify(self):
+        """백그라운드: 스트리밍 시작 후 뷰어에 정보 전송"""
+        try:
+            self._start_streaming()
+            self._send_stream_info()
+        except Exception as e:
+            print(f"  [Host] 스트리밍 시작 실패: {e}")
+            self.network.send_control({"cmd": "error", "msg": str(e)})
+
+    def _send_stream_info(self):
+        """뷰어에 스트림 정보 + SPS/PPS + 모니터 정보 전송"""
         if self.encoder:
             self.network.send_control({
                 "cmd": "stream_info",
@@ -106,8 +116,7 @@ class GhostHost:
                 self.network.send_sps_pps(sps_pps)
                 print(f"  [Host] SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
 
-        # 멀티모니터 정보 전송 (연결 시 물리 모니터 감지)
-        if hasattr(self.capture, 'get_monitor_info'):
+        if self.capture and hasattr(self.capture, 'get_monitor_info'):
             monitors = self.capture.get_monitor_info()
             if len(monitors) == 1:
                 self.capture.select_monitor(monitors[0]["index"])
@@ -118,8 +127,7 @@ class GhostHost:
                 "selected": selected,
             })
 
-        # DXGI: 정적 화면에서도 프레임 반복
-        if hasattr(self.capture, 'force_repeat'):
+        if self.capture and hasattr(self.capture, 'force_repeat'):
             self.capture.force_repeat(duration=5.0)
 
     def _on_viewer_disconnected(self):

@@ -47,6 +47,12 @@ class VideoWidget(QWidget):
     def update_frame(self, qimage: QImage) -> None:
         """Store the latest decoded frame and schedule a repaint."""
         self._current_frame = qimage
+        self._status_text = None
+        self.update()
+
+    def set_status_text(self, text: str) -> None:
+        """Show status text on the placeholder screen."""
+        self._status_text = text
         self.update()
 
     def set_stream_size(self, w: int, h: int) -> None:
@@ -102,7 +108,8 @@ class VideoWidget(QWidget):
         font = QFont()
         font.setPixelSize(18)
         painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignCenter, "연결 대기 중...")
+        text = getattr(self, '_status_text', None) or "연결 대기 중..."
+        painter.drawText(self.rect(), Qt.AlignCenter, text)
 
     # ── Cursor ──────────────────────────────────────────
 
