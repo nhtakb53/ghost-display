@@ -14,52 +14,102 @@ import numpy as np
 
 
 def get_physical_monitor_count():
-    """물리 모니터 수 반환 (RDP/가상 모니터 제외)"""
+    """DXGI 어댑터 기반 물리 모니터 수 반환 (가상 어댑터 제외)"""
     try:
-        user32 = ctypes.windll.user32
+        from ctypes import POINTER, byref, c_void_p, c_uint
 
-        class DISPLAY_DEVICE(ctypes.Structure):
+        dxgi = ctypes.windll.dxgi
+
+        # DXGI Factory 생성
+        IID_IDXGIFactory1 = (ctypes.c_byte * 16)(
+            0x78, 0xae, 0x0a, 0x77, 0x6f, 0xf2, 0xba, 0x4d,
+            0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87,
+        )
+        factory = c_void_p()
+        hr = dxgi.CreateDXGIFactory1(byref(IID_IDXGIFactory1), byref(factory))
+        if hr != 0:
+            return 0
+
+        factory_vt = ctypes.cast(
+            ctypes.cast(factory, POINTER(c_void_p))[0],
+            POINTER(c_void_p * 30)
+        ).contents
+
+        # EnumAdapters (index 7)
+        EnumAdapters = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_uint, POINTER(c_void_p))(factory_vt[7])
+
+        class DXGI_ADAPTER_DESC(ctypes.Structure):
             _fields_ = [
-                ("cb", ctypes.wintypes.DWORD),
-                ("DeviceName", ctypes.c_wchar * 32),
-                ("DeviceString", ctypes.c_wchar * 128),
-                ("StateFlags", ctypes.wintypes.DWORD),
-                ("DeviceID", ctypes.c_wchar * 128),
-                ("DeviceKey", ctypes.c_wchar * 128),
+                ("Description", ctypes.c_wchar * 128),
+                ("VendorId", ctypes.c_uint),
+                ("DeviceId", ctypes.c_uint),
+                ("SubSysId", ctypes.c_uint),
+                ("Revision", ctypes.c_uint),
+                ("DedicatedVideoMemory", ctypes.c_size_t),
+                ("DedicatedSystemMemory", ctypes.c_size_t),
+                ("SharedSystemMemory", ctypes.c_size_t),
+                ("AdapterLuid_Low", ctypes.c_ulong),
+                ("AdapterLuid_High", ctypes.c_long),
             ]
 
-        ATTACHED_TO_DESKTOP = 0x00000001
-        MIRRORING_DRIVER = 0x00000008
+        virtual_keywords = ["microsoft", "remote", "virtual", "basic render"]
+        physical_outputs = 0
 
-        virtual_keywords = ["remote", "rdp", "virtual", "indirect",
-                           "microsoft basic", "microsoft remote"]
-
-        physical = 0
-        idx = 0
+        adapter_idx = 0
         while True:
-            dev = DISPLAY_DEVICE()
-            dev.cb = ctypes.sizeof(dev)
-            if not user32.EnumDisplayDevicesW(None, idx, ctypes.byref(dev), 0):
+            adapter = c_void_p()
+            hr = EnumAdapters(factory, adapter_idx, byref(adapter))
+            if hr != 0:
                 break
-            idx += 1
+            adapter_idx += 1
 
-            if not (dev.StateFlags & ATTACHED_TO_DESKTOP):
-                continue
-            if dev.StateFlags & MIRRORING_DRIVER:
-                continue
+            # GetDesc (index 8)
+            adapter_vt = ctypes.cast(
+                ctypes.cast(adapter, POINTER(c_void_p))[0],
+                POINTER(c_void_p * 20)
+            ).contents
+            GetDesc = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, POINTER(DXGI_ADAPTER_DESC))(adapter_vt[8])
+            desc = DXGI_ADAPTER_DESC()
+            GetDesc(adapter, byref(desc))
 
-            desc = dev.DeviceString.lower()
-            dev_id = dev.DeviceID.lower()
+            adapter_name = desc.Description.lower()
+            is_virtual = any(kw in adapter_name for kw in virtual_keywords)
 
-            is_virtual = any(kw in desc or kw in dev_id for kw in virtual_keywords)
             if is_virtual:
-                print(f"  [MultiCapture] 가상 모니터 제외: {dev.DeviceName} ({dev.DeviceString})")
+                print(f"  [MultiCapture] 가상 어댑터 제외: {desc.Description}")
+                # Release adapter
+                Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(adapter_vt[2])
+                Release(adapter)
                 continue
 
-            physical += 1
-            print(f"  [MultiCapture] 물리 모니터 감지: {dev.DeviceName} ({dev.DeviceString})")
+            # 이 어댑터의 출력(모니터) 수 세기
+            EnumOutputs = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, c_uint, POINTER(c_void_p))(adapter_vt[7])
+            output_idx = 0
+            while True:
+                output = c_void_p()
+                hr2 = EnumOutputs(adapter, output_idx, byref(output))
+                if hr2 != 0:
+                    break
+                output_idx += 1
+                # Release output
+                out_vt = ctypes.cast(
+                    ctypes.cast(output, POINTER(c_void_p))[0],
+                    POINTER(c_void_p * 3)
+                ).contents
+                ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(out_vt[2])(output)
 
-        return physical
+            print(f"  [MultiCapture] 물리 어댑터: {desc.Description} → 출력 {output_idx}개")
+            physical_outputs += output_idx
+
+            # Release adapter
+            Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(adapter_vt[2])
+            Release(adapter)
+
+        # Release factory
+        fac_release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(factory_vt[2])
+        fac_release(factory)
+
+        return physical_outputs
     except Exception as e:
         print(f"  [MultiCapture] 물리 모니터 감지 실패: {e}")
         return 0
