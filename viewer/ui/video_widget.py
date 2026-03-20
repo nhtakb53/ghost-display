@@ -82,19 +82,19 @@ class VideoWidget(QWidget):
         painter.end()
 
     def _paint_frame(self, painter: QPainter) -> None:
-        """Scale frame to fill widget completely (no letterbox)."""
+        """Scale frame to fit within widget (letterbox, aspect ratio preserved)."""
         fw = self._current_frame.width()
         fh = self._current_frame.height()
         ww = self.width()
         wh = self.height()
 
-        # 위젯 전체를 채움 (비율 유지, 넘치는 부분 잘림)
-        scale = max(ww / fw, wh / fh) if fw and fh else 1.0
+        scale = min(ww / fw, wh / fh) if fw and fh else 1.0
         dw = int(fw * scale)
         dh = int(fh * scale)
         dx = (ww - dw) // 2
         dy = (wh - dh) // 2
 
+        painter.fillRect(self.rect(), QColor("#000000"))
         target = QRect(dx, dy, dw, dh)
         painter.drawImage(target, self._current_frame)
 
