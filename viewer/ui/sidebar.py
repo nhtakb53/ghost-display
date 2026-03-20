@@ -77,16 +77,27 @@ class Sidebar(QFrame):
 
         self._add_separator(layout)
 
-        # --- Monitor Selection ---
+        # --- Monitor Selection (hidden until monitor_info arrives) ---
+        self._monitor_section = QFrame()
+        self._monitor_section.setStyleSheet("background: transparent;")
+        mon_layout = QVBoxLayout(self._monitor_section)
+        mon_layout.setContentsMargins(0, 0, 0, 0)
+        mon_layout.setSpacing(4)
+
         monitor_header = QLabel("모니터")
         monitor_header.setStyleSheet("color: #a6adc8; font-size: 11px; background: transparent;")
-        layout.addWidget(monitor_header)
+        mon_layout.addWidget(monitor_header)
 
         self.monitor_buttons_layout = QVBoxLayout()
         self.monitor_buttons_layout.setSpacing(4)
-        layout.addLayout(self.monitor_buttons_layout)
+        mon_layout.addLayout(self.monitor_buttons_layout)
 
-        self._add_separator(layout)
+        self._monitor_section.hide()
+        layout.addWidget(self._monitor_section)
+
+        self._monitor_sep = self._make_separator()
+        self._monitor_sep.hide()
+        layout.addWidget(self._monitor_sep)
 
         # --- Input Mode ---
         input_header = QLabel("입력 모드")
@@ -134,15 +145,28 @@ class Sidebar(QFrame):
         layout.addStretch()
 
     def _add_separator(self, layout: QVBoxLayout):
+        sep = self._make_separator()
+        layout.addWidget(sep)
+
+    def _make_separator(self) -> QFrame:
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: rgba(69, 71, 90, 0.6); background: transparent;")
         sep.setFixedHeight(1)
-        layout.addWidget(sep)
+        return sep
 
     # ── Monitor buttons ───────────────────────────────
 
     def set_monitors(self, monitors: list, selected=None):
+        # 모니터가 2개 이상일 때만 표시
+        if len(monitors) >= 2:
+            self._monitor_section.show()
+            self._monitor_sep.show()
+        else:
+            self._monitor_section.hide()
+            self._monitor_sep.hide()
+            return
+
         for btn in self._monitor_buttons:
             btn.setParent(None)
             btn.deleteLater()
