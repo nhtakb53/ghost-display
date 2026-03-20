@@ -55,9 +55,10 @@ class StreamServer:
         self.tcp_addr = None
 
         # 콜백
-        self.on_input = None       # 입력 이벤트 콜백
-        self.on_connected = None   # viewer 연결 콜백
-        self.on_control = None     # 제어 명령 콜백
+        self.on_input = None         # 입력 이벤트 콜백
+        self.on_connected = None     # viewer 연결 콜백
+        self.on_disconnected = None  # viewer 연결 해제 콜백
+        self.on_control = None       # 제어 명령 콜백
 
         # 통계
         self.bytes_sent = 0
@@ -134,6 +135,8 @@ class StreamServer:
                 if not data:
                     print("  [Network] Viewer disconnected")
                     self.viewer_addr = None
+                    if self.on_disconnected:
+                        self.on_disconnected()
                     break
 
                 buf += data
