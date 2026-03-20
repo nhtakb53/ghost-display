@@ -393,15 +393,16 @@ class GhostViewer:
                     self.running = False
                     break
 
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE and self.input_active:
-                        # Escape: 입력 캡처 해제
+                elif event.type == pygame.ACTIVEEVENT:
+                    # 마우스가 창 밖으로 나가면 캡처 해제
+                    if self.input_active and hasattr(event, 'gain') and event.gain == 0:
                         self.input_active = False
                         pygame.event.set_grab(False)
                         pygame.mouse.set_visible(True)
                         self._update_title()
-                        print(f"  [Viewer] 입력 캡처 해제 (Escape)")
-                    elif event.key == pygame.K_F10:
+
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_F10:
                         new_mode = "sendinput" if self.input_mode == "kse" else "kse"
                         self._send_control({"cmd": "switch_input_mode", "mode": new_mode})
                         self.input_mode = new_mode
@@ -411,17 +412,15 @@ class GhostViewer:
                         self._send_key(event.key, down=True)
 
                 elif event.type == pygame.KEYUP:
-                    if self.input_active and event.key not in (pygame.K_ESCAPE, pygame.K_F10):
+                    if self.input_active and event.key not in (pygame.K_F10,):
                         self._send_key(event.key, down=False)
 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if not self.input_active:
-                        # 창 클릭 → 입력 캡처 시작
+                        # 창 클릭 → 입력 캡처 시작 (grab 없이 — 창 밖으로 나가면 자동 해제)
                         self.input_active = True
-                        pygame.event.set_grab(True)
                         pygame.mouse.set_visible(False)
                         self._update_title()
-                        print(f"  [Viewer] 입력 캡처 시작 (클릭)")
                     else:
                         btn = {1: "left", 2: "middle", 3: "right"}.get(event.button, "left")
                         if event.button in (4, 5):
