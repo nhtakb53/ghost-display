@@ -211,7 +211,8 @@ class GhostHost:
                     break
                 time.sleep(0.05)
 
-        self.input_handler.update_resolution(self.enc_w, self.enc_h)
+        is_multi = hasattr(self.capture, 'captures') and len(self.capture.captures) > 1
+        self.input_handler.update_resolution(self.enc_w, self.enc_h, virtual_desktop=is_multi)
 
         self.streaming = True
         print(f"  [Host] Streaming at {self.args.fps}fps, {self.args.bitrate}")
@@ -347,9 +348,11 @@ class GhostHost:
                 self.enc_w = new_w
                 self.enc_h = new_h
                 self.scale = scale
-                self.input_handler.update_resolution(self.enc_w, self.enc_h)
+                # 전체 보기면 가상 데스크톱, 개별 모니터면 단일
+                is_all = self.capture.selected is None
+                self.input_handler.update_resolution(self.enc_w, self.enc_h, virtual_desktop=is_all)
                 self._restart_encoder()
-                print(f"  [Host] 모니터 전환 → {self.enc_w}x{self.enc_h}")
+                print(f"  [Host] 모니터 전환 → {self.enc_w}x{self.enc_h} {'[VD]' if is_all else ''}")
 
         selected = "all" if self.capture.selected is None else self.capture.selected
         self.network.send_control({

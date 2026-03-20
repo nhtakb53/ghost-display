@@ -42,6 +42,7 @@ MOUSE_WHEEL = 0x0400
 # Mouse move flags
 MOUSE_MOVE_RELATIVE = 0
 MOUSE_MOVE_ABSOLUTE = 1
+MOUSE_VIRTUAL_DESKTOP = 2
 
 # Keyboard flags
 KEY_MAKE = 0
@@ -334,9 +335,12 @@ def _switch_to_active_desktop():
 class InputHandler:
     """입력 인젝션 - KSE 커널 드라이버 우선, 실패 시 SendInput 폴백"""
 
+    MOUSEEVENTF_VIRTUALDESK = 0x4000
+
     def __init__(self, screen_width=1920, screen_height=1080, force_sendinput=False):
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.virtual_desktop = False  # 멀티모니터 가상 데스크톱 모드
         self.handle = None
         self.connected = False
         self.use_sendinput = False
@@ -500,7 +504,7 @@ class InputHandler:
     KEYEVENTF_SCANCODE = 0x0008
 
     def _mouse_move(self, x, y):
-        """절대 좌표 마우스 이동"""
+        """절대 좌표 마우스 이동 (멀티모니터: 가상 데스크톱 좌표)"""
         abs_x = int(x * 65535 / max(self.screen_width, 1))
         abs_y = int(y * 65535 / max(self.screen_height, 1))
 
@@ -508,12 +512,14 @@ class InputHandler:
             self._move_log_count = 0
         self._move_log_count += 1
         if self._move_log_count <= 10 or self._move_log_count % 100 == 0:
-            print(f"  [Input] mouse_move: raw=({x},{y}) abs=({abs_x},{abs_y}) screen=({self.screen_width}x{self.screen_height})")
+            vd = " [VD]" if self.virtual_desktop else ""
+            print(f"  [Input] mouse_move: raw=({x},{y}) abs=({abs_x},{abs_y}) screen=({self.screen_width}x{self.screen_height}){vd}")
 
         if self.use_sendinput:
-            self._send_mouse_input(abs_x, abs_y,
-                                   self.MOUSEEVENTF_MOVE | self.MOUSEEVENTF_ABSOLUTE,
-                                   0)
+            flags = self.MOUSEEVENTF_MOVE | self.MOUSEEVENTF_ABSOLUTE
+            if self.virtual_desktop:
+                flags |= self.MOUSEEVENTF_VIRTUALDESK
+            self._send_mouse_input(abs_x, abs_y, flags, 0)
         else:
             req = KSERequest()
             req.cmd = CMD_INPUT
@@ -522,7 +528,10 @@ class InputHandler:
             req.u.mouse.dy = abs_y
             req.u.mouse.buttonFlags = 0
             req.u.mouse.buttonData = 0
-            req.u.mouse.mouseFlags = MOUSE_MOVE_ABSOLUTE
+            mouse_flags = MOUSE_MOVE_ABSOLUTE
+            if self.virtual_desktop:
+                mouse_flags |= MOUSE_VIRTUAL_DESKTOP
+            req.u.mouse.mouseFlags = mouse_flags
             self._ioctl(req)
 
     def _mouse_button(self, button, down):
@@ -687,9 +696,10 @@ class InputHandler:
     def get_mode(self):
         return "sendinput" if self.use_sendinput else "kse"
 
-    def update_resolution(self, width, height):
+    def update_resolution(self, width, height, virtual_desktop=False):
         self.screen_width = width
         self.screen_height = height
+        self.virtual_desktop = virtual_desktop
 
     def close(self):
         if self.handle:
