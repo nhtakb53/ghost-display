@@ -32,6 +32,7 @@ class VideoWidget(QWidget):
         self._stream_height: int = 1080
         self._last_move_time: float = 0.0
         self._mouse_pos = None  # 캡처 중 마우스 위치
+        self._video_rect = None  # 영상 실제 렌더링 영역 (dx, dy, dw, dh)
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -91,6 +92,9 @@ class VideoWidget(QWidget):
         painter.fillRect(self.rect(), QColor("#000000"))
         target = QRect(dx, dy, dw, dh)
         painter.drawImage(target, self._current_frame)
+
+        # 영상 렌더링 영역 저장 (마우스 좌표 변환용)
+        self._video_rect = (dx, dy, dw, dh)
 
     def _paint_placeholder(self, painter: QPainter) -> None:
         """Draw a dark background with centred waiting text."""
@@ -164,6 +168,26 @@ class VideoWidget(QWidget):
         if evt:
             self.input_event.emit(evt)
 
+    def _widget_to_stream(self, wx, wy):
+        """위젯 좌표 → 스트림 좌표 (영상 렌더링 영역 기준)"""
+        if self._video_rect:
+            dx, dy, dw, dh = self._video_rect
+        else:
+            dx, dy, dw, dh = 0, 0, self.width(), self.height()
+
+        # 영상 영역 내 상대 좌표
+        rx = wx - dx
+        ry = wy - dy
+
+        # 클램프
+        rx = max(0, min(rx, dw))
+        ry = max(0, min(ry, dh))
+
+        # 스트림 좌표로 변환
+        sx = int(rx * self._stream_width / dw) if dw else 0
+        sy = int(ry * self._stream_height / dh) if dh else 0
+        return sx, sy
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         pos = event.position()
         if self._input_active:
@@ -175,12 +199,8 @@ class VideoWidget(QWidget):
                 return
             self._last_move_time = now
 
-            evt = map_mouse_move(
-                pos.x(), pos.y(),
-                self.width(), self.height(),
-                self._stream_width, self._stream_height,
-            )
-            self.input_event.emit(evt)
+            sx, sy = self._widget_to_stream(pos.x(), pos.y())
+            self.input_event.emit({"type": "mouse_move", "x": sx, "y": sy})
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         if self._input_active:

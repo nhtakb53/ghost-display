@@ -10,6 +10,7 @@ class Sidebar(QFrame):
 
     monitor_selected = Signal(object)   # int index or "all"
     input_mode_changed = Signal(str)    # "kse" or "sendinput"
+    close_requested = Signal()
 
     PANEL_WIDTH = 220
 
@@ -39,13 +40,27 @@ class Sidebar(QFrame):
         layout.setSpacing(10)
 
         # --- Header ---
+        header_row = QHBoxLayout()
         title = QLabel("Ghost Display")
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(14)
         title.setFont(title_font)
         title.setStyleSheet("color: #89b4fa; background: transparent;")
-        layout.addWidget(title)
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #a6adc8; border: none;"
+            "  border-radius: 4px; font-size: 16px; }"
+            "QPushButton:hover { background: rgba(69, 71, 90, 0.6); color: #f38ba8; }"
+        )
+        close_btn.clicked.connect(self.close_requested.emit)
+        header_row.addWidget(close_btn)
+        layout.addLayout(header_row)
 
         # --- Connection ---
         conn_row = QHBoxLayout()
@@ -178,15 +193,9 @@ class Sidebar(QFrame):
             self.status_dot.setStyleSheet("color: #a6adc8; font-size: 10px; background: transparent;")
             self.host_ip_label.setText("미연결")
 
-    # ── Toggle (slide in/out) ─────────────────────────
+    # ── Slide in/out ────────────────────────────────────
 
-    def toggle(self):
-        if self._expanded:
-            self._slide_out()
-        else:
-            self._slide_in()
-
-    def _slide_in(self):
+    def slide_in(self):
         self.show()
         self.raise_()
         start = QPoint(-self.PANEL_WIDTH, 12)
@@ -194,7 +203,7 @@ class Sidebar(QFrame):
         self._animate_pos(start, end)
         self._expanded = True
 
-    def _slide_out(self):
+    def slide_out(self):
         start = self.pos()
         end = QPoint(-self.PANEL_WIDTH, 12)
         anim = self._animate_pos(start, end)

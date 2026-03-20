@@ -1,5 +1,5 @@
 """Streaming screen - floating panel over fullscreen video"""
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QWidget, QPushButton
 from PySide6.QtCore import Qt
 
 from viewer.ui.sidebar import Sidebar
@@ -17,8 +17,9 @@ class StreamingScreen(QWidget):
 
         # Floating sidebar (child of this widget, not in layout)
         self.sidebar = Sidebar(self)
+        self.sidebar.close_requested.connect(self._close_sidebar)
 
-        # Toggle button (top-left corner)
+        # Toggle button (top-left corner, visible when sidebar is hidden)
         self.toggle_btn = QPushButton("☰")
         self.toggle_btn.setParent(self)
         self.toggle_btn.setFixedSize(36, 36)
@@ -34,19 +35,21 @@ class StreamingScreen(QWidget):
             "}"
         )
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.clicked.connect(self._toggle_sidebar)
-
-        # No layout needed - manual positioning
+        self.toggle_btn.clicked.connect(self._open_sidebar)
         self.toggle_btn.move(12, 12)
         self.toggle_btn.raise_()
 
-    def _toggle_sidebar(self):
-        self.sidebar.toggle()
+    def _open_sidebar(self):
+        self.toggle_btn.hide()
+        self.sidebar.slide_in()
+
+    def _close_sidebar(self):
+        self.sidebar.slide_out()
+        self.toggle_btn.show()
+        self.toggle_btn.raise_()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Video fills entire area
         self.video.setGeometry(0, 0, self.width(), self.height())
-        # Keep toggle button on top
         self.toggle_btn.raise_()
         self.sidebar.raise_()
