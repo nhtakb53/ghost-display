@@ -51,7 +51,7 @@ LOG_FILE = os.path.join(_programdata_log, "ghost-host.log")
 DEFAULT_CONFIG = {
     "monitor": 0,
     "fps": 60,
-    "bitrate": "8M",
+    "bitrate": "20M",
     "video_port": 9000,
     "control_port": 9001,
     "software": False,
