@@ -97,6 +97,8 @@ class MainWindow(QMainWindow):
         self._connect_screen.set_connecting(False)
         self._stack.setCurrentIndex(1)
         self._stream_screen.sidebar.update_connection(self._host_ip, True)
+        # 기본 모니터 1개 표시 (monitor_info가 오면 업데이트됨)
+        self._stream_screen.sidebar.set_monitors([{"index": 0}], 0)
         print(f"  [Viewer] Connected to {self._host_ip}")
 
     @Slot()
