@@ -51,12 +51,12 @@ class Sidebar(QFrame):
         header_row.addStretch()
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
+        close_btn.setFixedSize(32, 32)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #a6adc8; border: none;"
-            "  border-radius: 4px; font-size: 16px; }"
-            "QPushButton:hover { background: rgba(69, 71, 90, 0.6); color: #f38ba8; }"
+            "QPushButton { background: rgba(69, 71, 90, 0.4); color: #cdd6f4; border: none;"
+            "  border-radius: 6px; font-size: 18px; font-weight: bold; }"
+            "QPushButton:hover { background: rgba(243, 139, 168, 0.3); color: #f38ba8; }"
         )
         close_btn.clicked.connect(self.close_requested.emit)
         header_row.addWidget(close_btn)
