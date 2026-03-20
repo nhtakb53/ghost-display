@@ -5,3 +5,4 @@ opencv-python
 miniupnpc
 pywin32
 imageio-ffmpeg
+PySide6
