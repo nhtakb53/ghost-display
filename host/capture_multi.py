@@ -3,11 +3,66 @@
 capture.py / capture_dxgi.py 의 래퍼
 
 뷰어에서 모니터 선택 가능: select_monitor(n) or select_monitor("all")
+물리 모니터만 자동 감지 (RDP 가상 모니터 제외)
 """
 
+import ctypes
+import ctypes.wintypes
 import threading
 import time
 import numpy as np
+
+
+def get_physical_monitor_count():
+    """물리 모니터 수 반환 (RDP/가상 모니터 제외)"""
+    try:
+        user32 = ctypes.windll.user32
+
+        class DISPLAY_DEVICE(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.wintypes.DWORD),
+                ("DeviceName", ctypes.c_wchar * 32),
+                ("DeviceString", ctypes.c_wchar * 128),
+                ("StateFlags", ctypes.wintypes.DWORD),
+                ("DeviceID", ctypes.c_wchar * 128),
+                ("DeviceKey", ctypes.c_wchar * 128),
+            ]
+
+        ATTACHED_TO_DESKTOP = 0x00000001
+        MIRRORING_DRIVER = 0x00000008
+
+        virtual_keywords = ["remote", "rdp", "virtual", "indirect",
+                           "microsoft basic", "microsoft remote"]
+
+        physical = 0
+        idx = 0
+        while True:
+            dev = DISPLAY_DEVICE()
+            dev.cb = ctypes.sizeof(dev)
+            if not user32.EnumDisplayDevicesW(None, idx, ctypes.byref(dev), 0):
+                break
+            idx += 1
+
+            if not (dev.StateFlags & ATTACHED_TO_DESKTOP):
+                continue
+            if dev.StateFlags & MIRRORING_DRIVER:
+                continue
+
+            desc = dev.DeviceString.lower()
+            dev_id = dev.DeviceID.lower()
+
+            is_virtual = any(kw in desc or kw in dev_id for kw in virtual_keywords)
+            if is_virtual:
+                print(f"  [MultiCapture] 가상 모니터 제외: {dev.DeviceName} ({dev.DeviceString})")
+                continue
+
+            physical += 1
+            print(f"  [MultiCapture] 물리 모니터 감지: {dev.DeviceName} ({dev.DeviceString})")
+
+        return physical
+    except Exception as e:
+        print(f"  [MultiCapture] 물리 모니터 감지 실패: {e}")
+        return 0
 
 
 class MultiMonitorCapture:
@@ -36,12 +91,20 @@ class MultiMonitorCapture:
         self.running = True
         self.start_time = time.time()
 
-        # 모니터 0부터 순서대로 생성, 실패하면 중단
-        for i in range(self.max_monitors):
+        # 물리 모니터만 감지 (RDP 가상 모니터 제외)
+        physical_count = get_physical_monitor_count()
+        if physical_count > 0:
+            max_cap = physical_count
+            print(f"  [MultiCapture] 물리 모니터 {physical_count}개 감지")
+        else:
+            max_cap = self.max_monitors
+            print(f"  [MultiCapture] 물리 모니터 감지 실패, 최대 {max_cap}개 시도")
+
+        # 모니터 0부터 순서대로 생성, 물리 모니터 수만큼만
+        for i in range(max_cap):
             try:
                 cap = self._create_capture(i)
                 cap.start()
-                # 첫 프레임 대기 (모니터가 실제로 존재하는지 확인)
                 time.sleep(1)
                 if cap.running:
                     self.captures.append(cap)
