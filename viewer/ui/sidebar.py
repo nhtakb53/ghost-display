@@ -1,69 +1,70 @@
-"""Collapsible sidebar for streaming controls"""
+"""Floating panel for streaming controls"""
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-                                QPushButton, QComboBox, QWidget, QSizePolicy)
-from PySide6.QtCore import Signal, Qt, QPropertyAnimation, QEasingCurve
+                                QPushButton, QComboBox, QGraphicsOpacityEffect)
+from PySide6.QtCore import Signal, Qt, QPropertyAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import QFont
 
 
 class Sidebar(QFrame):
-    """Collapsible sidebar with monitor selection, settings, and stats."""
+    """Floating translucent panel over the video area."""
 
     monitor_selected = Signal(object)   # int index or "all"
     input_mode_changed = Signal(str)    # "kse" or "sendinput"
 
-    EXPANDED_WIDTH = 220
-    COLLAPSED_WIDTH = 0
+    PANEL_WIDTH = 220
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._expanded = True
+        self._expanded = False  # 시작 시 숨김
         self.setObjectName("sidebar")
-        self.setFixedWidth(self.EXPANDED_WIDTH)
+        self.setFixedWidth(self.PANEL_WIDTH)
 
         self._monitor_buttons: list[QPushButton] = []
         self._selected_monitor = None
 
-        self._build_ui()
+        self.setStyleSheet(
+            "QFrame#sidebar {"
+            "  background-color: rgba(24, 24, 37, 0.92);"
+            "  border-radius: 12px;"
+            "  border: 1px solid rgba(69, 71, 90, 0.5);"
+            "}"
+        )
 
-    # ------------------------------------------------------------------ #
-    #  UI construction
-    # ------------------------------------------------------------------ #
+        self._build_ui()
+        self.hide()
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 16, 12, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 16, 14, 16)
+        layout.setSpacing(10)
 
-        # --- Section 1: Header ---
+        # --- Header ---
         title = QLabel("Ghost Display")
         title_font = QFont()
         title_font.setBold(True)
-        title_font.setPointSize(16)
+        title_font.setPointSize(14)
         title.setFont(title_font)
-        title.setStyleSheet("color: #89b4fa;")  # blue accent
+        title.setStyleSheet("color: #89b4fa; background: transparent;")
         layout.addWidget(title)
 
-        # --- Section 2: Connection ---
-        conn_header = QLabel("연결 상태")
-        conn_header.setStyleSheet("color: #a6adc8; font-size: 11px;")
-        layout.addWidget(conn_header)
-
+        # --- Connection ---
         conn_row = QHBoxLayout()
-        self.status_dot = QLabel("\u2b24")  # filled circle
-        self.status_dot.setStyleSheet("color: #a6adc8; font-size: 10px;")
+        self.status_dot = QLabel("\u2b24")
+        self.status_dot.setStyleSheet("color: #a6adc8; font-size: 10px; background: transparent;")
         self.status_dot.setFixedWidth(16)
         conn_row.addWidget(self.status_dot)
 
         self.host_ip_label = QLabel("미연결")
-        self.host_ip_label.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+        self.host_ip_label.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent;")
         conn_row.addWidget(self.host_ip_label)
         conn_row.addStretch()
         layout.addLayout(conn_row)
 
         self._add_separator(layout)
 
-        # --- Section 3: Monitor Selection ---
+        # --- Monitor Selection ---
         monitor_header = QLabel("모니터")
-        monitor_header.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        monitor_header.setStyleSheet("color: #a6adc8; font-size: 11px; background: transparent;")
         layout.addWidget(monitor_header)
 
         self.monitor_buttons_layout = QVBoxLayout()
@@ -72,67 +73,60 @@ class Sidebar(QFrame):
 
         self._add_separator(layout)
 
-        # --- Section 4: Input Mode ---
+        # --- Input Mode ---
         input_header = QLabel("입력 모드")
-        input_header.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        input_header.setStyleSheet("color: #a6adc8; font-size: 11px; background: transparent;")
         layout.addWidget(input_header)
 
-        self.input_mode_combo = QComboBox()
-        self.input_mode_combo.addItems(["KSE", "SendInput"])
-        self.input_mode_combo.currentTextChanged.connect(
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(["KSE", "SendInput"])
+        self._mode_combo.currentTextChanged.connect(
             lambda text: self.input_mode_changed.emit(text.lower())
         )
-        layout.addWidget(self.input_mode_combo)
+        layout.addWidget(self._mode_combo)
 
         self._add_separator(layout)
 
-        # --- Section 5: Stats ---
+        # --- Stats ---
         stats_header = QLabel("상태")
-        stats_header.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        stats_header.setStyleSheet("color: #a6adc8; font-size: 11px; background: transparent;")
         layout.addWidget(stats_header)
 
         self.fps_label = QLabel("FPS: --")
-        self.fps_label.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+        self.fps_label.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent;")
         layout.addWidget(self.fps_label)
 
         self.bitrate_label = QLabel("비트레이트: --")
-        self.bitrate_label.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+        self.bitrate_label.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent;")
         layout.addWidget(self.bitrate_label)
 
         self.keyframes_label = QLabel("키프레임: --")
-        self.keyframes_label.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+        self.keyframes_label.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent;")
         layout.addWidget(self.keyframes_label)
 
-        # --- Section 6: Spacer ---
         layout.addStretch()
 
     def _add_separator(self, layout: QVBoxLayout):
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #45475a;")
+        sep.setStyleSheet("color: rgba(69, 71, 90, 0.6); background: transparent;")
         sep.setFixedHeight(1)
         layout.addWidget(sep)
 
-    # ------------------------------------------------------------------ #
-    #  Monitor buttons
-    # ------------------------------------------------------------------ #
+    # ── Monitor buttons ───────────────────────────────
+
     def set_monitors(self, monitors: list, selected=None):
-        """Populate monitor buttons. *monitors* is a list of monitor info dicts/objects."""
-        # Clear existing buttons
         for btn in self._monitor_buttons:
             btn.setParent(None)
             btn.deleteLater()
         self._monitor_buttons.clear()
 
-        # "전체" button
         all_btn = self._make_monitor_button("전체", "all")
         self.monitor_buttons_layout.addWidget(all_btn)
         self._monitor_buttons.append(all_btn)
 
-        # Per-monitor buttons
         for idx, _mon in enumerate(monitors):
-            label = f"모니터 {idx + 1}"
-            btn = self._make_monitor_button(label, idx)
+            btn = self._make_monitor_button(f"모니터 {idx + 1}", idx)
             self.monitor_buttons_layout.addWidget(btn)
             self._monitor_buttons.append(btn)
 
@@ -156,64 +150,63 @@ class Sidebar(QFrame):
             if btn.property("monitor_value") == self._selected_monitor:
                 btn.setStyleSheet(
                     "background-color: #89b4fa; color: #1e1e2e; "
-                    "border: none; border-radius: 4px; padding: 6px;"
+                    "border: none; border-radius: 6px; padding: 6px 10px;"
                 )
             else:
                 btn.setStyleSheet(
-                    "background-color: #313244; color: #cdd6f4; "
-                    "border: none; border-radius: 4px; padding: 6px;"
+                    "background-color: rgba(49, 50, 68, 0.7); color: #cdd6f4; "
+                    "border: none; border-radius: 6px; padding: 6px 10px;"
                 )
 
-    # ------------------------------------------------------------------ #
-    #  Stats
-    # ------------------------------------------------------------------ #
+    # ── Stats ─────────────────────────────────────────
+
     def update_stats(self, stats: dict):
-        """Update stat labels. Keys: fps, bitrate, keyframes."""
-        if "fps" in stats:
-            self.fps_label.setText(f"FPS: {stats['fps']}")
-        if "bitrate" in stats:
-            self.bitrate_label.setText(f"비트레이트: {stats['bitrate']}")
+        if "recv_mbps" in stats:
+            self.bitrate_label.setText(f"비트레이트: {stats['recv_mbps']:.1f} Mbps")
+        if "nals" in stats:
+            self.fps_label.setText(f"NALs: {stats['nals']}")
         if "keyframes" in stats:
             self.keyframes_label.setText(f"키프레임: {stats['keyframes']}")
 
-    # ------------------------------------------------------------------ #
-    #  Connection
-    # ------------------------------------------------------------------ #
+    # ── Connection ────────────────────────────────────
+
     def update_connection(self, host_ip: str, connected: bool):
-        """Update connection status dot and IP label."""
         if connected:
-            self.status_dot.setStyleSheet("color: #a6e3a1; font-size: 10px;")  # green
+            self.status_dot.setStyleSheet("color: #a6e3a1; font-size: 10px; background: transparent;")
             self.host_ip_label.setText(host_ip)
         else:
-            self.status_dot.setStyleSheet("color: #a6adc8; font-size: 10px;")  # grey
+            self.status_dot.setStyleSheet("color: #a6adc8; font-size: 10px; background: transparent;")
             self.host_ip_label.setText("미연결")
 
-    # ------------------------------------------------------------------ #
-    #  Toggle (collapse / expand)
-    # ------------------------------------------------------------------ #
-    def toggle(self):
-        """Animate sidebar between expanded and collapsed states."""
-        start = self.EXPANDED_WIDTH if self._expanded else self.COLLAPSED_WIDTH
-        end = self.COLLAPSED_WIDTH if self._expanded else self.EXPANDED_WIDTH
+    # ── Toggle (slide in/out) ─────────────────────────
 
-        anim = QPropertyAnimation(self, b"maximumWidth", self)
+    def toggle(self):
+        if self._expanded:
+            self._slide_out()
+        else:
+            self._slide_in()
+
+    def _slide_in(self):
+        self.show()
+        self.raise_()
+        start = QPoint(-self.PANEL_WIDTH, 12)
+        end = QPoint(12, 12)
+        self._animate_pos(start, end)
+        self._expanded = True
+
+    def _slide_out(self):
+        start = self.pos()
+        end = QPoint(-self.PANEL_WIDTH, 12)
+        anim = self._animate_pos(start, end)
+        anim.finished.connect(self.hide)
+        self._expanded = False
+
+    def _animate_pos(self, start, end):
+        anim = QPropertyAnimation(self, b"pos", self)
         anim.setDuration(200)
         anim.setStartValue(start)
         anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-
-        # Also animate minimumWidth so the frame truly collapses
-        anim_min = QPropertyAnimation(self, b"minimumWidth", self)
-        anim_min.setDuration(200)
-        anim_min.setStartValue(start)
-        anim_min.setEndValue(end)
-        anim_min.setEasingCurve(QEasingCurve.Type.InOutQuad)
-
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim.start()
-        anim_min.start()
-
-        # Keep references so they aren't garbage-collected mid-animation
-        self._anim = anim
-        self._anim_min = anim_min
-
-        self._expanded = not self._expanded
+        self._pos_anim = anim
+        return anim
