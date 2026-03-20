@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
     def _on_connected(self):
         """Network connected - switch to streaming screen."""
         self._connect_screen.set_connecting(False)
+        self._connect_screen.save_host(self._host_ip, self._video_port, self._control_port)
         self._stack.setCurrentIndex(1)
         self._stream_screen.sidebar.update_connection(self._host_ip, True)
         # 기본 모니터 1개 표시 (monitor_info가 오면 업데이트됨)
