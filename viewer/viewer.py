@@ -381,6 +381,9 @@ class GhostViewer:
         pygame.display.set_caption("Ghost Display [F12: Input OFF]")
         clock = pygame.time.Clock()
 
+        # 커서 이미지 생성 (흰색 테두리 + 검은색 화살표)
+        cursor_surface = self._create_cursor_surface()
+
         print(f"  [Viewer] Window: {display_w}x{display_h}")
         print(f"  [Viewer] Press F12 to toggle input capture")
 
@@ -457,10 +460,28 @@ class GhostViewer:
                     screen.blit(scaled, (0, 0))
                     self.new_frame = False
 
+            # 입력 활성 시 마우스 커서 그리기
+            if self.input_active:
+                mx, my = pygame.mouse.get_pos()
+                screen.blit(cursor_surface, (mx, my))
+
             pygame.display.flip()
             clock.tick(60)
 
         pygame.quit()
+
+    def _create_cursor_surface(self):
+        """화살표 모양 커서 Surface 생성"""
+        size = 24
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        # 화살표 폴리곤 (Windows 기본 커서 형태)
+        arrow = [(0, 0), (0, 18), (4, 14), (8, 22), (11, 20), (7, 13), (12, 13)]
+        # 검은 테두리
+        pygame.draw.polygon(surf, (0, 0, 0), arrow, 0)
+        # 흰색 내부
+        inner = [(1, 2), (1, 15), (5, 12), (9, 20), (10, 19), (6, 11), (11, 11)]
+        pygame.draw.polygon(surf, (255, 255, 255), inner, 0)
+        return surf
 
     def _update_title(self):
         state = "ON" if self.input_active else "OFF"
