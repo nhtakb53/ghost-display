@@ -26,15 +26,23 @@ class GhostHost:
     def __init__(self, args):
         self.args = args
         capture_mode = getattr(args, 'capture_mode', 'wgc')
-        if capture_mode == 'dxgi':
+        monitor = getattr(args, 'monitor', '0')
+
+        if str(monitor).lower() == 'all':
+            from capture_multi import MultiMonitorCapture
+            self.capture = MultiMonitorCapture(
+                capture_mode=capture_mode,
+                target_fps=args.fps,
+            )
+        elif capture_mode == 'dxgi':
             from capture_dxgi import DXGICapture
             self.capture = DXGICapture(
-                monitor_index=args.monitor,
+                monitor_index=int(monitor),
                 target_fps=args.fps,
             )
         else:
             self.capture = WGCCapture(
-                monitor_index=args.monitor,
+                monitor_index=int(monitor),
                 target_fps=args.fps,
             )
         self.encoder = None
@@ -288,7 +296,7 @@ class GhostHost:
 
 def main():
     parser = argparse.ArgumentParser(description="Ghost Display - Host")
-    parser.add_argument("--monitor", type=int, default=0, help="Monitor index (default: 0)")
+    parser.add_argument("--monitor", type=str, default="0", help="Monitor index (default: 0, 'all' for all monitors)")
     parser.add_argument("--fps", type=int, default=60, help="Target FPS (default: 60)")
     parser.add_argument("--bitrate", type=str, default="20M", help="Video bitrate (default: 20M)")
     parser.add_argument("--video-port", type=int, default=9000, help="UDP video port (default: 9000)")
