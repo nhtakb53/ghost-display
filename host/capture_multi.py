@@ -141,15 +141,26 @@ class MultiMonitorCapture:
         self.running = True
         self.start_time = time.time()
 
-        # 모니터 0부터 순서대로 생성, 실패하면 중단
-        for i in range(self.max_monitors):
+        # 물리 모니터 수 감지 (제한용)
+        physical_count = get_physical_monitor_count()
+        max_cap = physical_count if physical_count > 0 else self.max_monitors
+        if physical_count > 0:
+            print(f"  [MultiCapture] 물리 모니터 {physical_count}개 감지")
+
+        # 모니터 0부터 순서대로 생성
+        for i in range(max_cap):
             try:
                 cap = self._create_capture(i)
-                cap.start()
-                time.sleep(1)
-                if cap.running:
+                cap.start()  # DXGICapture 내부에서 최대 30번 재시도
+                # 프레임 대기 (최대 5초)
+                got_frame = False
+                for _ in range(50):
+                    if cap.get_frame(timeout=0.1) is not None:
+                        got_frame = True
+                        break
+                if got_frame and cap.running:
                     self.captures.append(cap)
-                    print(f"  [MultiCapture] 모니터 {i} 추가됨")
+                    print(f"  [MultiCapture] 모니터 {i} 추가됨 ({cap.width}x{cap.height})")
                 else:
                     cap.stop()
                     break
@@ -167,29 +178,10 @@ class MultiMonitorCapture:
         self._stitch_thread.start()
 
     def _create_capture(self, monitor_index):
-        """캡처 인스턴스 생성. DXGI는 init만 먼저 테스트."""
+        """캡처 인스턴스 생성"""
         if self.capture_mode == "dxgi":
             from capture_dxgi import DXGICapture
-            cap = DXGICapture(monitor_index=monitor_index, target_fps=self.target_fps)
-            # init만 먼저 테스트 (실패 시 즉시 예외)
-            cap._init_dxgi()
-            # 성공하면 정리 후 정상 start()에서 다시 초기화
-            for obj_name in ['_staging_tex', '_duplication', '_context', '_device']:
-                obj = getattr(cap, obj_name, None)
-                if obj and obj.value:
-                    try:
-                        import ctypes
-                        from ctypes import POINTER, c_void_p
-                        vt = ctypes.cast(
-                            ctypes.cast(obj, POINTER(c_void_p))[0],
-                            POINTER(c_void_p * 3)
-                        ).contents
-                        Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(vt[2])
-                        Release(obj)
-                    except:
-                        pass
-                    setattr(cap, obj_name, None)
-            return cap
+            return DXGICapture(monitor_index=monitor_index, target_fps=self.target_fps)
         else:
             from capture import ScreenCapture as WGCCapture
             return WGCCapture(monitor_index=monitor_index, target_fps=self.target_fps)

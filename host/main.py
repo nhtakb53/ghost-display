@@ -85,7 +85,12 @@ class GhostHost:
         print(f"  [Host] Viewer connected from {addr}")
 
         if not self.streaming:
-            self._start_streaming()
+            try:
+                self._start_streaming()
+            except Exception as e:
+                print(f"  [Host] 스트리밍 시작 실패: {e}")
+                self.network.send_control({"cmd": "error", "msg": str(e)})
+                return
 
         # 스트림 정보 + SPS/PPS 전송
         if self.encoder:
