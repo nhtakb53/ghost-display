@@ -158,14 +158,17 @@ class MultiMonitorCapture:
         frames = []
         max_h = 0
         for cap in self.captures:
+            if not cap.running:
+                continue
             f = cap.get_frame(timeout=timeout)
             if f is not None:
                 frames.append(f)
                 max_h = max(max_h, f.shape[0])
             elif cap.latest_frame is not None:
                 with cap.frame_lock:
-                    frames.append(cap.latest_frame)
-                    max_h = max(max_h, cap.latest_frame.shape[0])
+                    if cap.latest_frame is not None:
+                        frames.append(cap.latest_frame)
+                        max_h = max(max_h, cap.latest_frame.shape[0])
 
         if not frames:
             return None

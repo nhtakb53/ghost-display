@@ -114,18 +114,27 @@ class MainWindow(QMainWindow):
 
     @Slot(bytes)
     def _on_sps_pps(self, data):
-        """SPS/PPS received - start/restart decoder and inject."""
+        """SPS/PPS received - cache and inject into decoder."""
+        self._sps_pps_data = data
         if self._decoder:
-            if not self._decoder.running:
-                video = self._stream_screen.video
-                self._decoder.start(video._stream_width, video._stream_height)
+            self._ensure_decoder_running()
             self._decoder.feed(data)
 
     @Slot(bytes, int)
     def _on_nal(self, nal_data, flags):
         """NAL unit received - feed to decoder."""
-        if self._decoder and self._decoder.running:
+        if self._decoder:
+            self._ensure_decoder_running()
             self._decoder.feed(nal_data)
+
+    def _ensure_decoder_running(self):
+        """Start decoder if not running, inject cached SPS/PPS."""
+        if not self._decoder.running:
+            video = self._stream_screen.video
+            self._decoder.start(video._stream_width, video._stream_height)
+            # Re-inject cached SPS/PPS into new decoder
+            if hasattr(self, '_sps_pps_data') and self._sps_pps_data:
+                self._decoder.feed(self._sps_pps_data)
 
     # ── Control messages ───────────────────────────────
 
@@ -140,9 +149,11 @@ class MainWindow(QMainWindow):
             w = ctrl.get("width", 1920)
             h = ctrl.get("height", 1080)
             video.set_stream_size(w, h)
-            # Restart decoder with correct resolution
+            # Restart decoder with correct resolution + re-inject SPS/PPS
             if self._decoder:
                 self._decoder.restart(w, h)
+                if hasattr(self, '_sps_pps_data') and self._sps_pps_data:
+                    self._decoder.feed(self._sps_pps_data)
             print(f"  [Viewer] Stream: {w}x{h} @ {ctrl.get('fps')}fps")
 
         elif cmd == "monitor_info":
