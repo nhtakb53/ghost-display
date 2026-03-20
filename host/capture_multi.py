@@ -63,9 +63,29 @@ class MultiMonitorCapture:
         self._stitch_thread.start()
 
     def _create_capture(self, monitor_index):
+        """캡처 인스턴스 생성. DXGI는 init만 먼저 테스트."""
         if self.capture_mode == "dxgi":
             from capture_dxgi import DXGICapture
-            return DXGICapture(monitor_index=monitor_index, target_fps=self.target_fps)
+            cap = DXGICapture(monitor_index=monitor_index, target_fps=self.target_fps)
+            # init만 먼저 테스트 (실패 시 즉시 예외)
+            cap._init_dxgi()
+            # 성공하면 정리 후 정상 start()에서 다시 초기화
+            for obj_name in ['_staging_tex', '_duplication', '_context', '_device']:
+                obj = getattr(cap, obj_name, None)
+                if obj and obj.value:
+                    try:
+                        import ctypes
+                        from ctypes import POINTER, c_void_p
+                        vt = ctypes.cast(
+                            ctypes.cast(obj, POINTER(c_void_p))[0],
+                            POINTER(c_void_p * 3)
+                        ).contents
+                        Release = ctypes.WINFUNCTYPE(ctypes.c_ulong, c_void_p)(vt[2])
+                        Release(obj)
+                    except:
+                        pass
+                    setattr(cap, obj_name, None)
+            return cap
         else:
             from capture import ScreenCapture as WGCCapture
             return WGCCapture(monitor_index=monitor_index, target_fps=self.target_fps)
