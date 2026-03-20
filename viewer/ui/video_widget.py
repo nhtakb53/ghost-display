@@ -31,11 +31,15 @@ class VideoWidget(QWidget):
         self._stream_width: int = 1920
         self._stream_height: int = 1080
         self._last_move_time: float = 0.0
+        self._mouse_pos = None  # 캡처 중 마우스 위치
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMinimumSize(640, 360)
         self.setStyleSheet("background-color: #000000;")
+
+        # 커서 이미지 생성
+        self._cursor_image = self._create_cursor_image()
 
     # ── Public API ────────────────────────────────────
 
@@ -63,6 +67,10 @@ class VideoWidget(QWidget):
             self._paint_frame(painter)
         else:
             self._paint_placeholder(painter)
+
+        # 캡처 중이면 커서 그리기
+        if self._input_active and self._mouse_pos is not None:
+            painter.drawImage(self._mouse_pos[0], self._mouse_pos[1], self._cursor_image)
 
         painter.end()
 
@@ -93,17 +101,48 @@ class VideoWidget(QWidget):
         painter.setFont(font)
         painter.drawText(self.rect(), Qt.AlignCenter, "연결 대기 중...")
 
+    # ── Cursor ──────────────────────────────────────────
+
+    def _create_cursor_image(self) -> QImage:
+        """흰색 화살표 커서 이미지 생성 (24x24)"""
+        from PySide6.QtGui import QPainterPath, QPen, QBrush
+        size = 24
+        img = QImage(size, size, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        path = QPainterPath()
+        path.moveTo(0, 0)
+        path.lineTo(0, 18)
+        path.lineTo(4, 14)
+        path.lineTo(8, 22)
+        path.lineTo(11, 20)
+        path.lineTo(7, 13)
+        path.lineTo(12, 13)
+        path.closeSubpath()
+
+        p.setPen(QPen(QColor("#000000"), 1.5))
+        p.setBrush(QBrush(QColor("#ffffff")))
+        p.drawPath(path)
+        p.end()
+        return img
+
     # ── Input capture helpers ─────────────────────────
 
     def _activate_capture(self) -> None:
         self._input_active = True
+        self._mouse_pos = self.mapFromGlobal(QCursor.pos())
+        self._mouse_pos = (self._mouse_pos.x(), self._mouse_pos.y())
         self.setCursor(Qt.BlankCursor)
         self.setFocus()
         self.capture_started.emit()
 
     def _deactivate_capture(self) -> None:
         self._input_active = False
+        self._mouse_pos = None
         self.setCursor(Qt.ArrowCursor)
+        self.update()
         self.capture_ended.emit()
 
     # ── Mouse events ──────────────────────────────────
@@ -126,21 +165,22 @@ class VideoWidget(QWidget):
             self.input_event.emit(evt)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if not self._input_active:
-            return
-
-        now = time.monotonic()
-        if now - self._last_move_time < self._MOVE_INTERVAL:
-            return
-        self._last_move_time = now
-
         pos = event.position()
-        evt = map_mouse_move(
-            pos.x(), pos.y(),
-            self.width(), self.height(),
-            self._stream_width, self._stream_height,
-        )
-        self.input_event.emit(evt)
+        if self._input_active:
+            self._mouse_pos = (int(pos.x()), int(pos.y()))
+            self.update()  # 커서 다시 그리기
+
+            now = time.monotonic()
+            if now - self._last_move_time < self._MOVE_INTERVAL:
+                return
+            self._last_move_time = now
+
+            evt = map_mouse_move(
+                pos.x(), pos.y(),
+                self.width(), self.height(),
+                self._stream_width, self._stream_height,
+            )
+            self.input_event.emit(evt)
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         if self._input_active:
