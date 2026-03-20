@@ -95,6 +95,18 @@ class Sidebar(QFrame):
 
         self._mode_combo = QComboBox()
         self._mode_combo.addItems(["KSE", "SendInput"])
+        self._mode_combo.setStyleSheet(
+            "QComboBox { background: rgba(49, 50, 68, 0.7); color: #cdd6f4;"
+            "  border: 1px solid rgba(69, 71, 90, 0.5); border-radius: 6px;"
+            "  padding: 6px 10px; font-size: 13px; }"
+            "QComboBox:hover { border-color: #89b4fa; }"
+            "QComboBox::drop-down { border: none; width: 24px; }"
+            "QComboBox::down-arrow { image: none; border-left: 4px solid transparent;"
+            "  border-right: 4px solid transparent; border-top: 5px solid #cdd6f4; }"
+            "QComboBox QAbstractItemView { background: #313244; color: #cdd6f4;"
+            "  selection-background-color: #89b4fa; selection-color: #1e1e2e;"
+            "  border: 1px solid #45475a; border-radius: 4px; padding: 4px; }"
+        )
         self._mode_combo.currentTextChanged.connect(
             lambda text: self.input_mode_changed.emit(text.lower())
         )
@@ -164,13 +176,17 @@ class Sidebar(QFrame):
         for btn in self._monitor_buttons:
             if btn.property("monitor_value") == self._selected_monitor:
                 btn.setStyleSheet(
-                    "background-color: #89b4fa; color: #1e1e2e; "
-                    "border: none; border-radius: 6px; padding: 6px 10px;"
+                    "QPushButton { background-color: #89b4fa; color: #1e1e2e; "
+                    "border: none; border-radius: 6px; padding: 6px 10px; font-size: 13px; }"
+                    "QPushButton:hover { background-color: #b4d0fb; }"
                 )
             else:
                 btn.setStyleSheet(
-                    "background-color: rgba(49, 50, 68, 0.7); color: #cdd6f4; "
-                    "border: none; border-radius: 6px; padding: 6px 10px;"
+                    "QPushButton { background-color: rgba(49, 50, 68, 0.7); color: #cdd6f4; "
+                    "border: 1px solid rgba(69, 71, 90, 0.5); border-radius: 6px; "
+                    "padding: 6px 10px; font-size: 13px; }"
+                    "QPushButton:hover { background-color: rgba(69, 71, 90, 0.8); "
+                    "border-color: #89b4fa; }"
                 )
 
     # ── Stats ─────────────────────────────────────────
