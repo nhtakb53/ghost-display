@@ -97,8 +97,9 @@ class MultiMonitorCapture:
             max_cap = physical_count
             print(f"  [MultiCapture] 물리 모니터 {physical_count}개 감지")
         else:
+            # 물리 모니터 없음 (헤드리스/RDP only) → 가상 모니터라도 캡처
             max_cap = self.max_monitors
-            print(f"  [MultiCapture] 물리 모니터 감지 실패, 최대 {max_cap}개 시도")
+            print(f"  [MultiCapture] 물리 모니터 없음 — 가상 모니터 포함 최대 {max_cap}개 시도")
 
         # 모니터 0부터 순서대로 생성, 물리 모니터 수만큼만
         for i in range(max_cap):
