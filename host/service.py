@@ -49,7 +49,7 @@ if not os.path.exists(_programdata_log):
 LOG_FILE = os.path.join(_programdata_log, "ghost-host.log")
 
 DEFAULT_CONFIG = {
-    "monitor": 0,
+    "monitor": "all",
     "fps": 60,
     "bitrate": "20M",
     "video_port": 9000,
