@@ -248,6 +248,42 @@ class GhostHost:
             if mode in ("kse", "sendinput"):
                 self.input_handler.switch_mode(mode)
                 self.network.send_control({"cmd": "input_mode_changed", "mode": self.input_handler.get_mode()})
+        elif cmd == "select_monitor":
+            self._handle_select_monitor(ctrl.get("monitor"))
+
+    def _handle_select_monitor(self, monitor):
+        """뷰어에서 모니터 선택 요청 처리"""
+        if not hasattr(self.capture, 'select_monitor'):
+            self.network.send_control({"cmd": "monitor_changed", "monitor": 0, "count": 1})
+            return
+
+        self.capture.select_monitor(monitor)
+
+        # 해상도 변경 → 인코더 재시작
+        time.sleep(0.3)  # 프레임 안정화 대기
+        frame = self.capture.get_frame(timeout=1.0)
+        if frame is not None:
+            h, w = frame.shape[:2]
+            scale = self.args.scale
+            if scale == 0:
+                scale = min(1.0, 1920 / w) if w > 1920 else 1.0
+            new_w = int(w * scale) // 2 * 2
+            new_h = int(h * scale) // 2 * 2
+
+            if new_w != self.enc_w or new_h != self.enc_h:
+                self.enc_w = new_w
+                self.enc_h = new_h
+                self.scale = scale
+                self.input_handler.update_resolution(self.enc_w, self.enc_h)
+                self._restart_encoder()
+                print(f"  [Host] 모니터 전환 → {self.enc_w}x{self.enc_h}")
+
+        selected = "all" if self.capture.selected is None else self.capture.selected
+        self.network.send_control({
+            "cmd": "monitor_changed",
+            "monitor": selected,
+            "count": self.capture.get_monitor_count(),
+        })
 
     def _on_viewer_connected(self, addr):
         """Viewer 연결 시 SPS/PPS + 스트림 정보 즉시 전송"""
@@ -266,7 +302,16 @@ class GhostHost:
                 self.network.send_sps_pps(sps_pps)
                 print(f"  [Host] SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
 
-        # 3. DXGI 캡처: 정적 화면에서도 프레임 반복 전달 (연결 안정화)
+        # 3. 멀티모니터 정보 전송
+        if hasattr(self.capture, 'get_monitor_info'):
+            selected = "all" if self.capture.selected is None else self.capture.selected
+            self.network.send_control({
+                "cmd": "monitor_info",
+                "monitors": self.capture.get_monitor_info(),
+                "selected": selected,
+            })
+
+        # 4. DXGI 캡처: 정적 화면에서도 프레임 반복 전달 (연결 안정화)
         if hasattr(self.capture, 'force_repeat'):
             self.capture.force_repeat(duration=5.0)
 

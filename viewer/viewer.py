@@ -20,6 +20,23 @@ _test_mode = "--test" in sys.argv
 if not _test_mode:
     import pygame
 
+# 모니터 선택 키 매핑 (입력 비활성 상태에서만 동작)
+# 0=전체, 1~9=개별 모니터
+_MONITOR_KEYS = {}
+if not _test_mode:
+    _MONITOR_KEYS = {
+        pygame.K_0: "all", pygame.K_KP0: "all",
+        pygame.K_1: 0, pygame.K_KP1: 0,
+        pygame.K_2: 1, pygame.K_KP2: 1,
+        pygame.K_3: 2, pygame.K_KP3: 2,
+        pygame.K_4: 3, pygame.K_KP4: 3,
+        pygame.K_5: 4, pygame.K_KP5: 4,
+        pygame.K_6: 5, pygame.K_KP6: 5,
+        pygame.K_7: 6, pygame.K_KP7: 6,
+        pygame.K_8: 7, pygame.K_KP8: 7,
+        pygame.K_9: 8, pygame.K_KP9: 8,
+    }
+
 # 모든 print에 타임스탬프 자동 추가
 import builtins
 from datetime import datetime
@@ -157,6 +174,9 @@ class GhostViewer:
         self.input_active = False
         # 입력 모드 (F10으로 전환)
         self.input_mode = "kse"
+        # 모니터 선택
+        self.monitor_count = 1
+        self.selected_monitor = "all"
 
     def start(self):
         if not self.test_mode:
@@ -408,6 +428,11 @@ class GhostViewer:
                         self.input_mode = new_mode
                         self._update_title()
                         print(f"  [Viewer] 입력 모드 전환 요청: {new_mode}")
+                    elif not self.input_active and event.key in _MONITOR_KEYS:
+                        # 입력 비활성 상태에서 숫자키 → 모니터 선택
+                        mon = _MONITOR_KEYS[event.key]
+                        self._send_control({"cmd": "select_monitor", "monitor": mon})
+                        print(f"  [Viewer] 모니터 선택 요청: {mon}")
                     elif self.input_active:
                         self._send_key(event.key, down=True)
 
@@ -485,11 +510,16 @@ class GhostViewer:
         return surf
 
     def _update_title(self):
+        mon = f"전체" if self.selected_monitor == "all" else f"모니터{int(self.selected_monitor)+1}"
+        if self.monitor_count > 1:
+            mon_hint = f" [{mon}]"
+        else:
+            mon_hint = ""
         if self.input_active:
             mode = self.input_mode.upper()
-            pygame.display.set_caption(f"Ghost Display - 캡처 중 [Esc:해제] [F10:{mode}]")
+            pygame.display.set_caption(f"Ghost Display - 캡처 중{mon_hint} [Esc:해제] [F10:{mode}]")
         else:
-            pygame.display.set_caption(f"Ghost Display - 클릭하여 입력 캡처")
+            pygame.display.set_caption(f"Ghost Display{mon_hint} - 클릭:캡처 | 0~{self.monitor_count}:모니터선택")
 
     def _send_key(self, key, down):
         """pygame 키 → scan code 변환 후 전송"""
@@ -794,6 +824,21 @@ class GhostViewer:
         elif cmd == "input_mode_changed":
             self.input_mode = ctrl.get("mode", self.input_mode)
             print(f"  [Viewer] 호스트 입력 모드: {self.input_mode}")
+            if not _test_mode:
+                self._update_title()
+        elif cmd == "monitor_info":
+            monitors = ctrl.get("monitors", [])
+            self.monitor_count = len(monitors)
+            self.selected_monitor = ctrl.get("selected", "all")
+            mon_str = ", ".join(f"{m['index']}:{m['width']}x{m['height']}" for m in monitors)
+            print(f"  [Viewer] 모니터 {self.monitor_count}개: [{mon_str}]")
+            print(f"  [Viewer] 숫자키로 모니터 선택 (0=전체, 1~{self.monitor_count}=개별) - 입력 해제 상태에서")
+            if not _test_mode:
+                self._update_title()
+        elif cmd == "monitor_changed":
+            self.selected_monitor = ctrl.get("monitor", "all")
+            self.monitor_count = ctrl.get("count", 1)
+            print(f"  [Viewer] 모니터 전환: {self.selected_monitor}")
             if not _test_mode:
                 self._update_title()
         elif cmd == "host_udp_addr":
