@@ -141,18 +141,8 @@ class MultiMonitorCapture:
         self.running = True
         self.start_time = time.time()
 
-        # 물리 모니터만 감지 (RDP 가상 모니터 제외)
-        physical_count = get_physical_monitor_count()
-        if physical_count > 0:
-            max_cap = physical_count
-            print(f"  [MultiCapture] 물리 모니터 {physical_count}개 감지")
-        else:
-            # 물리 모니터 없음 (헤드리스/RDP only) → 가상 모니터라도 캡처
-            max_cap = self.max_monitors
-            print(f"  [MultiCapture] 물리 모니터 없음 — 가상 모니터 포함 최대 {max_cap}개 시도")
-
-        # 모니터 0부터 순서대로 생성, 물리 모니터 수만큼만
-        for i in range(max_cap):
+        # 모니터 0부터 순서대로 생성, 실패하면 중단
+        for i in range(self.max_monitors):
             try:
                 cap = self._create_capture(i)
                 cap.start()
@@ -221,14 +211,18 @@ class MultiMonitorCapture:
         return len(self.captures)
 
     def get_monitor_info(self):
-        """각 모니터의 해상도 정보 반환"""
+        """각 모니터의 해상도 정보 반환 (물리 모니터만 필터링)"""
+        physical_count = get_physical_monitor_count()
         info = []
         for i, cap in enumerate(self.captures):
-            info.append({
-                "index": i,
-                "width": cap.width,
-                "height": cap.height,
-            })
+            # 물리 모니터 수 이내면 물리, 아니면 가상
+            is_physical = (physical_count == 0) or (i < physical_count)
+            if is_physical:
+                info.append({
+                    "index": i,
+                    "width": cap.width,
+                    "height": cap.height,
+                })
         return info
 
     def _output_loop(self):

@@ -302,12 +302,16 @@ class GhostHost:
                 self.network.send_sps_pps(sps_pps)
                 print(f"  [Host] SPS/PPS sent to viewer ({len(sps_pps)} bytes)")
 
-        # 3. 멀티모니터 정보 전송
+        # 3. 멀티모니터 정보 전송 (뷰어 연결 시 물리 모니터 감지)
         if hasattr(self.capture, 'get_monitor_info'):
+            monitors = self.capture.get_monitor_info()
+            # 물리 모니터가 1개면 자동 선택
+            if len(monitors) == 1:
+                self.capture.select_monitor(monitors[0]["index"])
             selected = "all" if self.capture.selected is None else self.capture.selected
             self.network.send_control({
                 "cmd": "monitor_info",
-                "monitors": self.capture.get_monitor_info(),
+                "monitors": monitors,
                 "selected": selected,
             })
 
