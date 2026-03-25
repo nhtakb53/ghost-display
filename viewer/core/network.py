@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject, Signal
 # ── Protocol constants ──────────────────────────────────────────────
 HEADER_FMT = "!BBHI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+MAX_TCP_PACKET_SIZE = 4 * 1024 * 1024  # 4MB - NAL 최대 허용 크기
 
 PKT_VIDEO = 0x01
 PKT_INPUT = 0x10
@@ -67,6 +68,9 @@ class NetworkClient(QObject):
 
         # Host STUN address (set via control message)
         self.host_udp_addr: tuple | None = None
+
+        # TCP video fallback
+        self._tcp_video_requested = False
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -182,9 +186,10 @@ class NetworkClient(QObject):
     def _tcp_recv_loop(self) -> None:
         buf = b""
         self.tcp_sock.settimeout(1.0)
+        self.tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         while self.running:
             try:
-                data = self.tcp_sock.recv(4096)
+                data = self.tcp_sock.recv(65536)
                 if not data:
                     break
                 buf += data
@@ -192,18 +197,28 @@ class NetworkClient(QObject):
                 while len(buf) >= HEADER_SIZE:
                     pkt_type, flags, seq, size = struct.unpack(
                         HEADER_FMT, buf[:HEADER_SIZE])
+                    if size > MAX_TCP_PACKET_SIZE:
+                        print(f"  [Network] TCP 스트림 손상 감지 (size={size}), 버퍼 리셋")
+                        buf = b""
+                        break
                     if len(buf) < HEADER_SIZE + size:
                         break
                     payload = buf[HEADER_SIZE:HEADER_SIZE + size]
                     buf = buf[HEADER_SIZE + size:]
 
                     if pkt_type == PKT_VIDEO:
-                        # SPS/PPS delivered over TCP
-                        self.sps_pps_data += payload
-                        self.got_sps_pps = True
-                        # Also check individual NALs for SPS/PPS signal
                         if self._is_sps_or_pps(payload):
+                            self.sps_pps_data += payload
+                            self.got_sps_pps = True
                             self.sps_pps_received.emit(payload)
+                        elif self._tcp_video_requested:
+                            # TCP 비디오 폴백: NAL 데이터 처리
+                            self.nals_received += 1
+                            self.bytes_received += len(payload) + HEADER_SIZE
+                            self.packets_received += 1
+                            if flags & FLAG_KEYFRAME:
+                                self.keyframes_received += 1
+                            self.nal_received.emit(payload, flags)
 
                     elif pkt_type == PKT_CONTROL:
                         try:
@@ -301,10 +316,22 @@ class NetworkClient(QObject):
     # ── Stats loop ──────────────────────────────────────────────────
 
     def _stats_loop(self) -> None:
+        # 3초 후 UDP 수신 확인 → 실패 시 TCP 폴백
+        time.sleep(3)
+        if self.running and self.packets_received == 0 and not self._tcp_video_requested:
+            print(f"  [Network] UDP 수신 없음 → TCP 비디오 폴백 요청")
+            self._tcp_video_requested = True
+            self._tcp_send(PKT_CONTROL, {"cmd": "request_tcp_video"})
+
         while self.running:
             time.sleep(5)
             if not self.running:
                 break
+
+            # TCP 폴백 후에도 데이터 없으면 재요청
+            if self._tcp_video_requested and self.packets_received == 0:
+                print(f"  [Network] TCP 폴백 재요청 (아직 수신 없음)")
+                self._tcp_send(PKT_CONTROL, {"cmd": "request_tcp_video"})
 
             now = time.time()
             dt = now - self._last_stats_time
@@ -321,6 +348,12 @@ class NetworkClient(QObject):
                 "keyframes": self.keyframes_received,
             }
             self.stats_updated.emit(stats)
+
+            d_nals = self.nals_received - self._last_stats_nals
+            print(f"  [Network] recv: {recv_mbps:.1f}Mbps, "
+                  f"pkts:{self.packets_received} (+{self.packets_received - self._last_stats_packets}), "
+                  f"nals:{self.nals_received} (+{d_nals}), "
+                  f"kf:{self.keyframes_received}")
 
             self._last_stats_time = now
             self._last_stats_bytes = self.bytes_received

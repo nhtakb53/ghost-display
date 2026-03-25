@@ -11,6 +11,7 @@ import json
 import time
 import sys
 import os
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.stun import stun_get_mapped_address
@@ -59,6 +60,10 @@ class StreamServer:
         self.on_connected = None     # viewer 연결 콜백
         self.on_disconnected = None  # viewer 연결 해제 콜백
         self.on_control = None       # 제어 명령 콜백
+
+        # TCP 비디오 폴백
+        self.tcp_video = False
+        self._tcp_lock = threading.Lock()
 
         # 통계
         self.bytes_sent = 0
@@ -203,6 +208,9 @@ class StreamServer:
                 for _ in range(5):
                     self.udp_sock.sendto(punch, (ip, port))
                 print(f"  [Network] STUN 기반 hole-punch → {ip}:{port}")
+        elif cmd == "request_tcp_video":
+            self.tcp_video = True
+            print(f"  [Network] TCP 비디오 폴백 활성화 (UDP 수신 불가)")
 
     def _udp_recv_loop(self):
         """UDP 수신 - viewer의 홀펀치 패킷으로 실제 NAT 주소 파악"""
@@ -220,7 +228,12 @@ class StreamServer:
                     break
 
     def send_video_nal(self, nal_data, nal_type, is_keyframe=False):
-        """하나의 NAL unit을 UDP로 전송 (필요시 분할)"""
+        """하나의 NAL unit을 UDP(또는 TCP 폴백)로 전송"""
+        if self.tcp_video:
+            flags = FLAG_KEYFRAME if is_keyframe else 0
+            self._send_tcp_with_flags(PKT_VIDEO, flags, nal_data)
+            return
+
         if not self.viewer_addr or not self.udp_sock:
             return
 
@@ -254,14 +267,23 @@ class StreamServer:
 
     def _send_tcp(self, pkt_type, payload=b""):
         """TCP 패킷 전송"""
+        self._send_tcp_with_flags(pkt_type, 0, payload)
+
+    def _send_tcp_with_flags(self, pkt_type, flags, payload=b""):
+        """TCP 패킷 전송 (플래그 포함, 스레드 안전)"""
         if not self.tcp_conn:
             return
-        self.seq = (self.seq + 1) & 0xFFFF
-        header = struct.pack(HEADER_FMT, pkt_type, 0, self.seq, len(payload))
-        try:
-            self.tcp_conn.sendall(header + payload)
-        except:
-            pass
+        with self._tcp_lock:
+            self.seq = (self.seq + 1) & 0xFFFF
+            header = struct.pack(HEADER_FMT, pkt_type, flags, self.seq, len(payload))
+            try:
+                self.tcp_conn.sendall(header + payload)
+                if pkt_type == PKT_VIDEO:
+                    self.bytes_sent += len(header) + len(payload)
+                    self.packets_sent += 1
+            except Exception as e:
+                if self.running:
+                    logging.debug(f"TCP send error: {e}")
 
     def send_sps_pps(self, sps_pps_data):
         """SPS+PPS를 TCP로 확실하게 전송 (Viewer 접속 시)"""
