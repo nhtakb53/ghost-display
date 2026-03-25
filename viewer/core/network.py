@@ -50,6 +50,8 @@ class NetworkClient(QObject):
 
         # Fragment reassembly
         self.frag_buffer = bytearray()
+        self._frag_seq_start = -1  # 첫 fragment의 seq
+        self._last_udp_seq = -1    # 마지막 수신 seq (패킷 손실 감지)
 
         # SPS/PPS tracking
         self.got_sps_pps = False
@@ -256,7 +258,7 @@ class NetworkClient(QObject):
                         (flags & FLAG_FRAGMENT) and self.frag_buffer
                     ):
                         self.keyframes_received += 1
-                    self._handle_video(flags, payload)
+                    self._handle_video(flags, seq, payload)
 
             except socket.timeout:
                 continue
@@ -265,14 +267,31 @@ class NetworkClient(QObject):
 
     # ── Video / fragment handling ───────────────────────────────────
 
-    def _handle_video(self, flags: int, payload: bytes) -> None:
+    def _handle_video(self, flags: int, seq: int, payload: bytes) -> None:
         if flags & FLAG_FRAGMENT:
+            # seq 연속성 확인 — 패킷 손실 시 불완전 NAL 폐기
+            if self.frag_buffer:
+                expected = (self._last_udp_seq + 1) & 0xFFFF
+                if seq != expected:
+                    self.frag_buffer = bytearray()
+                    self._frag_seq_start = -1
+
+            if not self.frag_buffer:
+                self._frag_seq_start = seq
+            self._last_udp_seq = seq
+
             self.frag_buffer.extend(payload)
             if flags & FLAG_LAST_FRAGMENT:
                 nal = bytes(self.frag_buffer)
                 self.frag_buffer = bytearray()
+                self._frag_seq_start = -1
                 self._process_nal(nal, flags)
         else:
+            # 비분할 NAL 도착 시 불완전 fragment 폐기
+            if self.frag_buffer:
+                self.frag_buffer = bytearray()
+                self._frag_seq_start = -1
+            self._last_udp_seq = seq
             self._process_nal(payload, flags)
 
     def _process_nal(self, nal_data: bytes, flags: int) -> None:
